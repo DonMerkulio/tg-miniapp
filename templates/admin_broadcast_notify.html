@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>Рассылка уведомлений</title>
+  <link rel="stylesheet" href="/static/css/base.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+</head>
+<body>
+<div class="container">
+  <header class="toolbar">
+    <h1 style="margin:0;font-size:22px">Рассылка уведомлений</h1>
+    <a class="btn" href="/">Закрыть</a>
+  </header>
+
+  <section class="card">
+    <div class="field">
+      <label>Текст сообщения</label>
+      <textarea id="msg" rows="4" style="width:100%;padding:12px;border:1px solid var(--line);border-radius:12px"></textarea>
+    </div>
+
+    <div class="field">
+      <label>Фото (до 10)</label>
+      <input id="photos" type="file" accept="image/*" multiple/>
+      <div style="color:var(--muted);font-size:13px;margin-top:4px">Выбрано: <b id="pcount">0</b></div>
+    </div>
+
+    <div class="field">
+      <label>Файлы/видео (до 5)</label>
+      <input id="files" type="file" accept="video/*,application/*" multiple/>
+      <div style="color:var(--muted);font-size:13px;margin-top:4px">Выбрано: <b id="fcount">0</b></div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button id="btnPreview" class="btn">Отправить себе</button>
+      <button id="btnSend" class="btn primary">Отправить всем</button>
+    </div>
+
+    <div style="color:var(--muted);margin-top:10px">Получателей: <b id="rcnt">—</b></div>
+
+    <div id="prog" class="hidden" style="margin:12px 0 0 0">
+      <div style="height:8px;border-radius:6px;background:#efeff4;overflow:hidden">
+        <div id="barIn" style="height:100%;width:0%;transition:width .25s ease;background:linear-gradient(90deg,#0a84ff,#30d158)"></div>
+      </div>
+      <div id="label" style="margin-top:8px;color:var(--muted)">0 / 0</div>
+    </div>
+  </section>
+
+  <section id="failsBox" class="card hidden" style="margin-top:12px">
+    <h3 style="margin:0 0 6px 0;font-size:16px">Не доставлено</h3>
+    <div id="failsList" style="display:grid;gap:8px"></div>
+  </section>
+</div>
+
+<!-- Busy overlay -->
+<div id="busy" class="busy">
+  <div class="box">
+    <div class="spinner"></div>
+    <span id="busyText">Выполняю…</span>
+  </div>
+</div>
+
+<script type="module" src="/static/js/pages/broadcast_notify.js?v=1"></script>
+</body>
+</html>

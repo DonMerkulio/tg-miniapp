@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+
+  <title>Отправки — создать</title>
+  <link rel="stylesheet" href="/static/css/base.css"/>
+  <link rel="stylesheet" href="/static/css/shipments.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+</head>
+<body>
+<div class="container">
+  <header class="toolbar">
+    <h1 style="margin:0;font-size:20px">Создать отправку</h1>
+    <div class="tool-left">
+      <a class="btn" href="/admin/shipments/active">Активные</a>
+      <a class="btn" href="/">Назад</a>
+    </div>
+  </header>
+
+  <section class="card">
+    <form id="formNew" class="form grid2">
+      <div class="field"><label>Категория</label><input name="category" required/></div>
+      <div class="field"><label>Артикул(а)</label><input name="articles" required/></div>
+
+      <div class="field"><label>Склад отправки</label>
+        <select name="warehouse" required class="select">
+          <option value="москва">Москва</option>
+          <option value="озеро">Озеро</option>
+        </select>
+      </div>
+
+      <div class="field"><label>Транспортная компания</label><input name="carrier" required/></div>
+      <div class="field"><label>Город получения</label><input name="city" required/></div>
+      <div class="field"><label>Информация о клиенте</label><input name="client_info" required/></div>
+
+      <div class="field"><label>Отправка на клиента</label>
+        <label class="switch">
+          <input type="checkbox" id="prepay_sw">
+          <span class="track"></span><span class="knob"></span>
+        </label>
+      </div>
+
+      <div class="field"><label>Трек-номер (опционально)</label><input name="track_no"/></div>
+
+      <div style="grid-column:1/-1">
+        <button class="btn primary" type="submit">Создать</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<script type="module" src="/static/js/shipments_create.js"></script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+  <title>Перемещения — активные</title>
+  <link rel="stylesheet" href="/static/css/base.css"/>
+  <link rel="stylesheet" href="/static/css/moves.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+</head>
+<body>
+<div class="container">
+  <header class="toolbar">
+    <h1 style="margin:0;font-size:20px">Активные перемещения</h1>
+    <div class="tool-left">
+      <a class="btn" href="/admin/moves">Создать</a>
+      <a class="btn" href="/">Закрыть</a>
+    </div>
+  </header>
+
+  <section class="card">
+    <div class="segmented small">
+      <input type="radio" name="to" id="to_all" value="" checked><label for="to_all">Все</label>
+      <input type="radio" name="to" id="to_msk" value="москва"><label for="to_msk">В Москву</label>
+      <input type="radio" name="to" id="to_oz" value="озеро"><label for="to_oz">В Озеро</label>
+    </div>
+
+    <div id="list" class="ship-list"></div>
+  </section>
+</div>
+
+<div id="detail" class="detail hidden">
+  <div class="detail-inner">
+    <div id="detailCard" class="detail-card"></div>
+  </div>
+</div>
+
+<script type="module" src="/static/js/moves_active.js"></script>
+</body>
+</html>

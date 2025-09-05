@@ -1,0 +1,34 @@
+#btnAdmin.hidden{display:none}
+#panelAdmin .admin-list{
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap:8px;
+}
+#panelAdmin .btn.sm.ghost{
+  background:#fff;
+  border:1px solid var(--line);
+  justify-content:center;
+}
+.push-right{ margin-left:auto }
+/* Единая высота и выравнивание кнопок в админ-меню */
+#panelAdmin .admin-list .btn,
+#panelAdmin .admin-list button.btn,
+#panelAdmin .admin-list a.btn{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 44px;          /* фиксируем высоту */
+  padding: 0 12px;       /* внутренние отступы по бокам */
+  white-space: nowrap;   /* не переносим текст */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+
+/* визуальный стиль для ghost-кнопок */
+#panelAdmin .admin-list .btn.ghost{
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}

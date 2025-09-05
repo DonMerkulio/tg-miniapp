@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+  <title>Перемещения — создать</title>
+  <link rel="stylesheet" href="/static/css/base.css"/>
+  <link rel="stylesheet" href="/static/css/moves.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+</head>
+<body>
+<div class="container">
+  <header class="toolbar">
+    <h1 style="margin:0;font-size:20px">Создать перемещение</h1>
+    <div class="tool-left">
+      <a class="btn" href="/admin/moves/active">Активные</a>
+      <a class="btn" href="/">Закрыть</a>
+    </div>
+  </header>
+
+  <section class="card">
+    <form id="formNew" class="form grid2">
+      <div class="field"><label>Запчасть</label><input name="part" required/></div>
+      <div class="field"><label>Артикул(а)</label><input name="articles" required/></div>
+
+      <div class="field" style="grid-column:1/-1">
+        <label>Маршрут</label>
+        <div class="segmented">
+          <input type="radio" name="route" id="r_oz_msk" value="озеро-москва" checked><label for="r_oz_msk">Озеро → Москва</label>
+          <input type="radio" name="route" id="r_msk_oz" value="москва-озеро"><label for="r_msk_oz">Москва → Озеро</label>
+        </div>
+      </div>
+
+      <div style="grid-column:1/-1">
+        <button class="btn primary" type="submit">Создать</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<script type="module" src="/static/js/moves_create.js"></script>
+</body>
+</html>

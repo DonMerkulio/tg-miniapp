@@ -1,0 +1,22 @@
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:620px){.grid2{grid-template-columns:1fr}}
+
+.select{width:100%;appearance:none;-webkit-appearance:none;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff}
+
+/* список */
+.ship-list{display:grid;gap:10px;margin-top:8px}
+.ship-card{padding:14px;border-radius:14px;border:1px solid var(--line);background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.06);display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.ship-card .meta{font-size:13px;color:var(--muted)}
+.ship-card .title{font-weight:600}
+.ship-card.green{border-color:#34c759; box-shadow:0 6px 18px rgba(52,199,89,.25)}
+.ship-card.red{border-color:#ff3b30; box-shadow:0 6px 18px rgba(255,59,48,.25)}
+.actions{display:flex;gap:8px}
+.btn.sm{padding:8px 10px;border-radius:10px;font-size:13px}
+
+/* iOS switch с зелёной подсветкой при включении */
+.switch{position:relative;width:52px;height:32px;display:inline-block;vertical-align:middle}
+.switch .track{position:absolute;inset:0;border-radius:999px;background:#e9e9ed;border:1px solid var(--line);transition:.2s}
+.switch input{display:none}
+.switch .knob{position:absolute;top:2px;left:2px;width:28px;height:28px;background:#fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,.2);transition:.2s}
+.switch input:checked ~ .knob{left:22px}
+.switch input:checked ~ .track{background:#34c759;border-color:#34c759}

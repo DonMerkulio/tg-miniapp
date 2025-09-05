@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>Рассылка прайсов</title>
+  <link rel="stylesheet" href="/static/css/base.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+</head>
+<body>
+<div class="container">
+  <header class="toolbar">
+    <h1 style="margin:0;font-size:22px">Рассылка прайсов</h1>
+    <a class="btn" href="/">Закрыть</a>
+  </header>
+
+  <section class="card">
+    <div style="color:var(--muted);margin-bottom:8px">Получателей: <b id="rcnt">—</b></div>
+
+    <div id="prog" class="hidden" style="margin:8px 0 14px 0">
+      <div id="bar" style="height:8px;border-radius:6px;background:#efeff4;overflow:hidden">
+        <div id="barIn" style="height:100%;width:0%;transition:width .25s ease;background:linear-gradient(90deg,#0a84ff,#30d158)"></div>
+      </div>
+      <div id="label" style="margin-top:8px;color:var(--muted)">0 / 0</div>
+    </div>
+
+    <button id="btnGo" class="btn primary">Разослать прайсы</button>
+  </section>
+
+  <section id="failsBox" class="card hidden" style="margin-top:12px">
+    <h3 style="margin:0 0 6px 0;font-size:16px">Не доставлено</h3>
+    <div id="failsList" style="display:grid;gap:8px"></div>
+  </section>
+</div>
+
+<!-- Busy overlay -->
+<div id="busy" class="busy">
+  <div class="box">
+    <div class="spinner"></div>
+    <span id="busyText">Выполняю…</span>
+  </div>
+</div>
+
+<script type="module" src="/static/js/pages/broadcast_prices.js?v=2"></script>
+</body>
+</html>

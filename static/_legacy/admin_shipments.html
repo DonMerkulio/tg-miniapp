@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>Отправки</title>
+  <link rel="stylesheet" href="/css/base.css"/>
+  <link rel="stylesheet" href="/css/shipments.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+<div class="container">
+  <header class="toolbar">
+    <h1 style="margin:0;font-size:20px">Отправки</h1>
+    <button id="btnBack" class="btn">Назад</button>
+  </header>
+
+  <section class="card">
+    <h2 style="margin:0 0 10px 0;font-size:18px">Создать отправку</h2>
+    <form id="formNew" class="form grid2">
+      <div class="field"><label>Категория</label><input name="category" required/></div>
+      <div class="field"><label>Артикул(а)</label><input name="articles" required/></div>
+
+      <div class="field"><label>Склад отправки</label>
+        <select name="warehouse" required class="select">
+          <option value="москва">Москва</option>
+          <option value="озеро">Озеро</option>
+        </select>
+      </div>
+
+      <div class="field"><label>Транспортная компания</label><input name="carrier" required/></div>
+      <div class="field"><label>Город получения</label><input name="city" required/></div>
+      <div class="field"><label>Информация о клиенте</label><input name="client_info" required/></div>
+
+      <div class="field"><label>Предоплата</label>
+        <div class="segmented small">
+          <input type="radio" name="prepay" id="pp0" value="0" checked><label for="pp0">Нет</label>
+          <input type="radio" name="prepay" id="pp1" value="1"><label for="pp1">Да</label>
+        </div>
+      </div>
+
+      <div class="field"><label>Трек-номер (опционально)</label><input name="track_no"/></div>
+
+      <div style="grid-column:1/-1">
+        <button class="btn primary" type="submit">Создать</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2 style="margin:0 0 10px 0;font-size:18px">Активные отправки</h2>
+
+    <div class="segmented small">
+      <input type="radio" name="wh" id="wh_all" value="" checked><label for="wh_all">Все</label>
+      <input type="radio" name="wh" id="wh_msk" value="москва"><label for="wh_msk">Москва</label>
+      <input type="radio" name="wh" id="wh_ozer" value="озеро"><label for="wh_ozer">Озеро</label>
+    </div>
+
+    <div id="list" class="ship-list"></div>
+  </section>
+</div>
+
+<div id="detail" class="detail hidden">
+  <div class="detail-inner">
+    <div id="detailCard" class="detail-card"></div>
+  </div>
+</div>
+
+<script type="module" src="/_legacy/shipments.js"></script>
+</body>
+</html>

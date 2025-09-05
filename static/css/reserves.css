@@ -1,0 +1,14 @@
+/* Админы */
+.admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.admin-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;border-radius:14px;border:1px solid var(--line);background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.06);cursor:pointer}
+.admin-card .title{font-weight:600}
+.admin-card .meta{font-size:13px;color:var(--muted)}
+.unknown-box{margin-top:8px}
+.hidden{display:none}
+
+/* Список резервов */
+.res-list{display:grid;gap:10px}
+.res-card{padding:14px;border-radius:14px;border:1px solid var(--line);background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.06);cursor:pointer}
+.res-card .title{font-weight:600}
+.res-card .meta{font-size:13px;color:var(--muted)}
+.res-card.red{border-color:#ff3b30; box-shadow:0 6px 18px rgba(255,59,48,.25)}

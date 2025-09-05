@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+  <title>Отправки — активные</title>
+  <link rel="stylesheet" href="/static/css/base.css"/>
+  <link rel="stylesheet" href="/static/css/shipments.css"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+</head>
+<body>
+<div class="container">
+  <header class="toolbar">
+    <h1 style="margin:0;font-size:20px">Активные отправки</h1>
+    <div class="tool-left">
+      <a class="btn" href="/admin/shipments">Создать</a>
+      <a class="btn" href="/">Назад</a>
+    </div>
+  </header>
+
+  <section class="card">
+    <div class="segmented small">
+      <input type="radio" name="wh" id="wh_all" value="" checked><label for="wh_all">Все</label>
+      <input type="radio" name="wh" id="wh_msk" value="москва"><label for="wh_msk">Москва</label>
+      <input type="radio" name="wh" id="wh_ozer" value="озеро"><label for="wh_ozer">Озеро</label>
+    </div>
+
+    <div id="list" class="ship-list"></div>
+  </section>
+</div>
+
+<div id="detail" class="detail hidden">
+  <div class="detail-inner">
+    <div id="detailCard" class="detail-card"></div>
+  </div>
+</div>
+
+<script type="module" src="/static/js/shipments_active.js"></script>
+</body>
+</html>

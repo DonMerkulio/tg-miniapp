@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+    <title>Витрина</title>
+
+    <link rel="stylesheet" href="/static/css/base.css"/>
+    <link rel="stylesheet" href="/static/css/admin.css"/>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <style>
+        /* гостя прячем и сразу показываем оверлей со спиннером, пока идёт boot в TG */
+        html.in-tg #guest {
+            display: none !important;
+        }
+
+        html.in-tg.loading #busy {
+            display: flex;
+        }
+    </style>
+    <script>
+        (function () {
+            try {
+                const tg = window.Telegram && window.Telegram.WebApp;
+                if (tg && typeof tg.initData === "string" && tg.initData.length > 0) {
+                    // навешиваем на <html>, он доступен в <head>
+                    document.documentElement.classList.add('in-tg', 'loading');
+                    try {
+                        tg.ready && tg.ready();
+                    } catch (_) {
+                    }
+                }
+            } catch (_) {
+            }
+        })();
+    </script>
+</head>
+<body>
+<div id="app" class="container">
+    <!-- Guest -->
+    <section id="guest" class="card">
+        <h1>Нужно открыть через Telegram</h1>
+        <p>Для использования приложения зайдите через Telegram.</p>
+        <a class="btn primary" href="https://t.me/staparik_bot">Войти через Telegram</a>
+    </section>
+
+    <!-- Registration -->
+    <section id="reg" class="card hidden">
+        <h1>Регистрация</h1>
+        <form id="regForm" class="form">
+            <div class="field"><label>Имя</label><input name="name" required placeholder="Ваше имя"/></div>
+            <div class="field"><label>Город</label><input name="city" required placeholder="Например, Москва"/></div>
+            <div class="field"><label>Телефон</label><input name="phone" required inputmode="tel" placeholder="+7..."/>
+            </div>
+            <div class="field"><label>Вид деятельности</label>
+                <div class="segmented">
+                    <input type="radio" name="role" id="r1" value="СТО" checked><label for="r1">СТО</label>
+                    <input type="radio" name="role" id="r2" value="Авторазбор"><label for="r2">Авторазбор</label>
+                    <input type="radio" name="role" id="r3" value="Частный клиент"><label for="r3">Частный</label>
+                </div>
+            </div>
+            <button class="btn primary" type="submit">Зарегистрироваться</button>
+        </form>
+    </section>
+
+    <!-- Blocked -->
+    <section id="blocked" class="card hidden">
+        <h1>Доступ ограничен</h1>
+        <p>Вас заблокировали в этом приложении. Если это ошибка — свяжитесь с администратором.</p>
+        <a class="btn" target="_blank" href="https://t.me/{{ ADMIN_USERNAME }}">Написать администратору</a>
+    </section>
+
+    <!-- Детальная карточка -->
+    <div id="detail" class="detail hidden">
+        <div class="detail-inner">
+            <div id="detailContent"></div>
+        </div>
+    </div>
+
+    <!-- Main -->
+    <section id="main" class="hidden">
+        <header class="toolbar">
+            <div class="tool-left">
+                <button id="btnSort" class="icon-btn" aria-label="Сортировка" title="Сортировка">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="6" x2="21" y2="6"/>
+                        <line x1="3" y1="12" x2="15" y2="12"/>
+                        <line x1="3" y1="18" x2="9" y2="18"/>
+                    </svg>
+                </button>
+                <button id="btnSearch" class="icon-btn" aria-label="Поиск" title="Поиск">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="7"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                </button>
+            </div>
+
+            <select id="sortSel" class="visually-hidden">
+                <option value="">Все</option>
+                <option value="price_asc">Цена ↑</option>
+                <option value="price_desc">Цена ↓</option>
+                <option value="brand">Марка</option>
+                <option value="model">Модель</option>
+                <option value="year">Год</option>
+            </select>
+
+            <button id="btnAdmin" class="icon-btn hidden" aria-label="Админ" title="Админ">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8.6 19a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4 15.4 1.65 1.65 0 0 0 2.49 14H2a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4 8.6 1.65 1.65 0 0 0 3.67 6.78l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.6 4c.23 0 .46-.05.67-.14V4a2 2 0 1 1 4 0v.09c.37.15.7.39.96.7.52.65 1.47.75 2.14.23l.06-.06a2 2 0 1 1 2.83 2.83l-.06-.06c-.52.67-.42 1.62.23 2.14.31.26.55.59.7.96H22a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/>
+                </svg>
+            </button>
+
+            <a id="dl" class="icon-btn ghost" title="Скачать прайсы" aria-label="Скачать прайсы">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+            </a>
+        </header>
+
+        <section class="tool-panels">
+            <div id="panelSearch" class="panel hidden">
+                <input id="search" class="search" placeholder="Поиск по марке, модели, артикулу, двигателю"/>
+                <div id="chips" class="chips rail hidden"></div>
+            </div>
+
+            <div id="panelAdmin" class="panel hidden">
+                <div class="admin-list">
+                    <button class="btn sm ghost" data-action="shipments">Отправки</button>
+                    <button class="btn sm ghost" data-action="moves">Перемещения</button>
+                    <button class="btn sm ghost" data-action="reserves">Резервы</button>
+                    <button class="btn sm ghost" data-action="users">Упр. пользователями</button>
+                    <button class="btn sm ghost" data-action="price-broadcast">Рассылка прайсов</button>
+                    <button class="btn sm ghost" data-action="notify-broadcast">Рассылка уведомлений</button>
+                    <button class="btn sm ghost" data-action="refresh">Обновить склад</button>
+                </div>
+            </div>
+        </section>
+
+        <div id="grid" class="grid"></div>
+    </section>
+</div>
+
+<!-- Busy overlay -->
+<div id="busy" class="busy">
+    <div class="box">
+        <div class="spinner"></div>
+        <span id="busyText">Загрузка…</span>
+    </div>
+</div>
+
+<script type="module" src="/static/js/main.js"></script>
+<script type="module" src="/static/js/admin.js"></script>
+<noscript>
+    <div class="card" style="margin-top:12px">Для работы включите JavaScript.</div>
+</noscript>
+</body>
+</html>
