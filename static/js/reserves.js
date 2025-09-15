@@ -154,9 +154,9 @@ function openDetail(it) {
         </div>
         <div class="detail-row"><span class="detail-label">Причина снятия:</span></div>
         <div class="detail-row">
-          <textarea id="fReason" rows="2" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;resize:vertical"
-            placeholder="Почему снимаем резерв?"></textarea>
+          <input id="fReason" class="search" placeholder="Почему снимаем? (необязательно)"/>
         </div>
+
 
         <div class="detail-actions">
           <button id="btnSave" class="btn sm">Сохранить</button>
@@ -204,11 +204,9 @@ function openDetail(it) {
 
     qs("#btnDel").onclick = async () => {
         const reason = (qs("#fReason")?.value || "").trim();
-        if (!reason && !confirm("Удалить без указания причины?")) return;
-
         showBusy("Удаляю…");
         try {
-            await post(`/api/reserves/${it.id}`, { init_data: init, reason }, "DELETE");
+            await post(`/api/reserves/${it.id}`, {init_data: init, reason}, "DELETE");
             detail.classList.add("hidden");
             const currentTitle = listTitle.textContent || "Список резервов";
             if (/Непонятные/i.test(currentTitle)) await loadList({unknown: 1, title: currentTitle});
@@ -218,6 +216,7 @@ function openDetail(it) {
             hideBusy();
         }
     };
+
 }
 
 loadAdmins().catch(console.error);

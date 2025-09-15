@@ -9,7 +9,7 @@ import httpx
 from aiogram import Bot
 
 from ..db import get_db
-from ..loaders import refresh_from_api, refresh_reserves
+from ..loaders import refresh_from_api, refresh_reserves, PRODUCTS
 from ..models import User
 from ..security import validate_init_data, extract_tg_id
 from ..config import settings
@@ -257,45 +257,24 @@ async def edit_comment(
 async def delete_reserve(
         zap: int,
         init_data: str = Body(..., embed=True),
-        reason: str = Body("", embed=True),
+        reason: str = Body("", embed=True),  # ← новое поле
         db: Session = Depends(get_db),
         background_tasks: BackgroundTasks = None,
 ):
     ok = validate_init_data(init_data)
-    if not ok:
-        raise HTTPException(401, "invalid initData")
+    if not ok: raise HTTPException(401, "invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id:
-        raise HTTPException(401, "user missing")
+    if not tg_id: raise HTTPException(401, "user missing")
     u = _check_admin(tg_id, db)
-    editor_name = (u.name or "").strip() or str(tg_id)
-
-    # заберём карточку до удаления — для уведомления
-    item = None
-    try:
-        rows = await _avax_all()
-        for r in rows:
-            try:
-                if int(r.get("id")) == zap:
-                    item = _map_row(r)
-                    break
-            except Exception:
-                continue
-    except Exception:
-        pass
+    remover_name = (u.name or "").strip() or str(tg_id)
 
     # Avax ждёт form-data
-    try:
-        async with httpx.AsyncClient(timeout=20) as cli:
-            r = await cli.post(AVAX_REMOVE_URL.rstrip("/"), data={"zap": str(zap)})
-            if r.status_code >= 400:
-                raise HTTPException(503, "remote error")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(503, "remote error")
+    async with httpx.AsyncClient(timeout=20) as cli:
+        r = await cli.post(AVAX_REMOVE_URL.rstrip("/"), data={"zap": str(zap)})
+        if r.status_code >= 400:
+            raise HTTPException(503, "remote error")
 
-    # форс-рефрешы
+    # обновим склад + набор резервов, дернём realtime
     try:
         await refresh_from_api(force=True)
     except Exception as e:
@@ -311,38 +290,37 @@ async def delete_reserve(
     except Exception as e:
         print("refresh_reserves after remove error:", e)
 
-    # уведомление в тред
-    lines = []
+    # уведомление
+    try:
+        p = next((x for x in PRODUCTS if x.id == zap), None)
+        if p:
+            r = p.__dict__.get("_raw", {})
 
-    def add(lbl, val):
-        v = (val or "").strip()
-        if v:
-            lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+            def add(lbl, val, lines):
+                v = (val or "").strip()
+                if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
 
-    if item:
-        title = f"{item['brand']} {item['model']}".strip()
-        header = f"🗑 <b>Резерв снят</b> — {html.escape(title)}"
-        add("Запчасть", item.get("part"))
-        add("Год", item.get("year"))
-        if item.get("engine_mark"):
-            add("Двигатель", item["engine_mark"])
-        if item.get("razbor"):
-            add("Разборочный", item["razbor"])
-        add("На складе", item.get("warehouse"))
-        if item.get("price") or item.get("currency"):
-            add("Цена", f"{item.get('price') or ''} {item.get('currency') or ''}".strip())
-    else:
-        header = "🗑 <b>Резерв снят</b>"
-        lines.append(f"<b>ID:</b> {zap}")
-
-    lines.append(f"<i>Снял: {html.escape(editor_name)}</i>")
-    if reason.strip():
-        lines.append(f"<b>Причина:</b> {html.escape(reason.strip())}")
-    txt = header + "\n" + "\n".join(lines)
-
-    if background_tasks is not None:
-        background_tasks.add_task(_send_tg, txt, THREAD_EDIT)
-    else:
-        await _send_tg(txt, THREAD_EDIT)
+            title = f"{p.brand} {p.model}".strip()
+            lines = []
+            add("Запчасть", p.part, lines)
+            add("Год", p.year, lines)
+            add("Двигатель", r.get("МАРКИРОВКА ДВИГАТЕЛЯ", ""), lines)
+            razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(),
+                                        (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
+            add("Разборочный", razb, lines)
+            add("На складе", r.get("Склад", ""), lines)
+            if p.price or p.currency: add("Цена", f"{p.price or ''} {p.currency or ''}", lines)
+            add("Снял", remover_name, lines)
+            if (reason or "").strip(): lines.append(f"<b>Причина:</b> {html.escape(reason.strip())}")
+            txt = "🗑 <b>Резерв снят</b> — " + html.escape(title) + "\n" + "\n".join(lines)
+        else:
+            base = f"🗑 <b>Резерв снят</b> — id:{zap}\n<b>Снял:</b> {html.escape(remover_name)}"
+            txt = base + (f"\n<b>Причина:</b> {html.escape(reason.strip())}" if (reason or "").strip() else "")
+        if background_tasks:
+            background_tasks.add_task(_send_tg, txt, THREAD_EDIT)
+        else:
+            await _send_tg(txt, THREAD_EDIT)
+    except Exception as e:
+        print("reserve remove notify error:", e)
 
     return {"ok": True}
