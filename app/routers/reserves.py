@@ -335,9 +335,9 @@ async def delete_reserve(
         header = "🗑 <b>Резерв снят</b>"
         lines.append(f"<b>ID:</b> {zap}")
 
-    if reason.strip():
-        add("Причина", reason)
     lines.append(f"<i>Снял: {html.escape(editor_name)}</i>")
+    if reason.strip():
+        lines.append(f"<b>Причина:</b> {html.escape(reason.strip())}")
     txt = header + "\n" + "\n".join(lines)
 
     if background_tasks is not None:
