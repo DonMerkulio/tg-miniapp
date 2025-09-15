@@ -69,13 +69,21 @@ function bindRegistration(init) {
     form.addEventListener("submit", async ev => {
         ev.preventDefault();
         const fd = new FormData(form);
-        await api.register(init, {
-            name: fd.get("name"), city: fd.get("city"),
-            phone: fd.get("phone"), role: fd.get("role")
-        });
-        await showMain(init);
+        showBusy("Регистрирую…");
+        try {
+            await api.register(init, {
+                name: fd.get("name"), city: fd.get("city"),
+                phone: fd.get("phone"), role: fd.get("role")
+            });
+            await showMain(init);
+        } catch (e) {
+            window.Telegram?.WebApp?.showAlert("Ошибка регистрации: " + (e?.message || "сервер недоступен"));
+        } finally {
+            hideBusy();
+        }
     });
 }
+
 
 async function showMain(init) {
     // экран + снятие спиннера

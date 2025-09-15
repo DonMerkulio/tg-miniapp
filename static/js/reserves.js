@@ -152,9 +152,9 @@ function openDetail(it) {
           <textarea id="fComment" rows="3" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;resize:vertical"
             placeholder="Введите комментарий…">${esc(it.user_comment || "")}</textarea>
         </div>
-        <div class="detail-row"><span class="detail-label">Причина снятия:</span></div>
+        <div class="detail-row"><span class="detail-label">Причина удаления:</span></div>
         <div class="detail-row">
-          <input id="fReason" class="search" placeholder="Почему снимаем? (необязательно)"/>
+          <input id="fReason" class="search" placeholder="Почему удаляем? (необязательно)"/>
         </div>
 
 
