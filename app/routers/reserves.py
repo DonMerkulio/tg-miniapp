@@ -279,11 +279,21 @@ async def delete_reserve(
     except Exception:
         raise HTTPException(503, "remote error")
 
-    # форс-рефреш склада, чтобы витрина и списки обновились
-    try:
-        await refresh_from_api(force=True)
-    except Exception as e:
-        print("force refresh after reserve remove failed:", e)
+        # форс‑рефреш: склад + список резервов, + оповещение витрины
+        try:
+            await refresh_from_api(force=True)
+        except Exception as e:
+            print("force refresh after reserve remove failed:", e)
+        try:
+            changed = await refresh_reserves(force=True)
+            if changed:
+                try:
+                    from .realtime import notify_inventory_changed
+                    notify_inventory_changed()
+                except Exception:
+                    pass
+        except Exception as e:
+            print("refresh_reserves after reserve remove failed:", e)
 
     # по желанию можно уведомлять в тред:
     # msg = f"🗑 <b>Резерв снят</b> — id:{zap}"

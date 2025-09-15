@@ -112,7 +112,7 @@ def parts_buckets():
         d["count"] += 1
     return sorted(out.values(), key=lambda x: (-x["count"], x["label"]))
 
-PRODUCTS: list[Product] = load_products()
+PRODUCTS: list[Product] = []
 
 # ---------- API refresh ----------
 API_URL = "https://avax.by/api/all_zap/DueMQ88!Sm43"
@@ -161,8 +161,14 @@ async def refresh_from_api(force: bool=False) -> None:
             try: items.append(_row_to_product(row))
             except: continue
         if items:
-            PRODUCTS = items
-            _save_rows_to_file(data)
+            # важно: не переприсваиваем, а мутируем список
+            PRODUCTS.clear()
+            PRODUCTS.extend(items)
+            # (если файловый кеш больше не нужен — строку ниже можно удалить)
+            try:
+                _save_rows_to_file(data)
+            except Exception:
+                pass
             _last_fetch_ts = now
             print(f"API refresh ok: {len(PRODUCTS)} items")
     except Exception as e:
@@ -172,6 +178,7 @@ async def background_refresher():
     while True:
         try:
             await refresh_from_api()
+            await refresh_reserves()  # держим RESERVED_IDS в тонусе
         except Exception as e:
             print("background_refresher error:", e)
         await asyncio.sleep(60)
@@ -214,8 +221,10 @@ async def refresh_reserves(force: bool = False) -> bool:
         return False
 
     changed = ids != RESERVED_IDS
-    RESERVED_IDS = ids
-    _last_reserves_ts = now
     if changed:
-        bump_inventory_version()
+        # важно: не переприсваиваем, а мутируем множество
+        RESERVED_IDS.clear()
+        RESERVED_IDS.update(ids)
+        bump_inventory_version()  # дергаем SSE
+    _last_reserves_ts = now
     return changed

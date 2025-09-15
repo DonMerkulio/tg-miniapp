@@ -519,4 +519,15 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
 @router.post("/refresh")
 async def force_refresh():
     await refresh_from_api(force=True)
+    # сразу обновим кеш резервов и, если изменилось, дёрнем live‑обновление
+    try:
+        changed = await refresh_reserves(force=True)
+        if changed:
+            try:
+                from .realtime import notify_inventory_changed
+                notify_inventory_changed()
+            except Exception:
+                pass
+    except Exception as e:
+        print("force_refresh: refresh_reserves failed:", e)
     return {"ok": True}
