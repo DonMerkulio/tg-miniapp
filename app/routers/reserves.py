@@ -9,7 +9,7 @@ import httpx
 from aiogram import Bot
 
 from ..db import get_db
-from ..loaders import refresh_from_api
+from ..loaders import refresh_from_api, refresh_reserves
 from ..models import User
 from ..security import validate_init_data, extract_tg_id
 from ..config import settings
@@ -257,6 +257,7 @@ async def edit_comment(
 async def delete_reserve(
         zap: int,
         init_data: str = Body(..., embed=True),
+        reason: str = Body("", embed=True),
         db: Session = Depends(get_db),
         background_tasks: BackgroundTasks = None,
 ):
@@ -266,9 +267,24 @@ async def delete_reserve(
     tg_id = extract_tg_id(ok.get("user"))
     if not tg_id:
         raise HTTPException(401, "user missing")
-    _check_admin(tg_id, db)
+    u = _check_admin(tg_id, db)
+    editor_name = (u.name or "").strip() or str(tg_id)
 
-    # Avax ждёт form-data: {"zap": id}
+    # заберём карточку до удаления — для уведомления
+    item = None
+    try:
+        rows = await _avax_all()
+        for r in rows:
+            try:
+                if int(r.get("id")) == zap:
+                    item = _map_row(r)
+                    break
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Avax ждёт form-data
     try:
         async with httpx.AsyncClient(timeout=20) as cli:
             r = await cli.post(AVAX_REMOVE_URL.rstrip("/"), data={"zap": str(zap)})
@@ -279,25 +295,54 @@ async def delete_reserve(
     except Exception:
         raise HTTPException(503, "remote error")
 
-        # форс‑рефреш: склад + список резервов, + оповещение витрины
-        try:
-            await refresh_from_api(force=True)
-        except Exception as e:
-            print("force refresh after reserve remove failed:", e)
-        try:
-            changed = await refresh_reserves(force=True)
-            if changed:
-                try:
-                    from .realtime import notify_inventory_changed
-                    notify_inventory_changed()
-                except Exception:
-                    pass
-        except Exception as e:
-            print("refresh_reserves after reserve remove failed:", e)
+    # форс-рефрешы
+    try:
+        await refresh_from_api(force=True)
+    except Exception as e:
+        print("force refresh after reserve remove failed:", e)
+    try:
+        changed = await refresh_reserves(force=True)
+        if changed:
+            try:
+                from .realtime import notify_inventory_changed
+                notify_inventory_changed()
+            except Exception:
+                pass
+    except Exception as e:
+        print("refresh_reserves after remove error:", e)
 
-    # по желанию можно уведомлять в тред:
-    # msg = f"🗑 <b>Резерв снят</b> — id:{zap}"
-    # if background_tasks: background_tasks.add_task(_send_tg, msg, THREAD_EDIT)
-    # else: await _send_tg(msg, THREAD_EDIT)
+    # уведомление в тред
+    lines = []
+
+    def add(lbl, val):
+        v = (val or "").strip()
+        if v:
+            lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+
+    if item:
+        title = f"{item['brand']} {item['model']}".strip()
+        header = f"🗑 <b>Резерв снят</b> — {html.escape(title)}"
+        add("Запчасть", item.get("part"))
+        add("Год", item.get("year"))
+        if item.get("engine_mark"):
+            add("Двигатель", item["engine_mark"])
+        if item.get("razbor"):
+            add("Разборочный", item["razbor"])
+        add("На складе", item.get("warehouse"))
+        if item.get("price") or item.get("currency"):
+            add("Цена", f"{item.get('price') or ''} {item.get('currency') or ''}".strip())
+    else:
+        header = "🗑 <b>Резерв снят</b>"
+        lines.append(f"<b>ID:</b> {zap}")
+
+    if reason.strip():
+        add("Причина", reason)
+    lines.append(f"<i>Снял: {html.escape(editor_name)}</i>")
+    txt = header + "\n" + "\n".join(lines)
+
+    if background_tasks is not None:
+        background_tasks.add_task(_send_tg, txt, THREAD_EDIT)
+    else:
+        await _send_tg(txt, THREAD_EDIT)
 
     return {"ok": True}

@@ -198,10 +198,12 @@ function openDetail(it) {
     };
 
     qs("#btnDel").onclick = async () => {
-        if (!confirm("Удалить резерв?")) return;
+        const reason = window.prompt("Укажите причину снятия резерва (необязательно):", "");
+        if (reason === null) return; // нажали «Отмена»
+
         showBusy("Удаляю…");
         try {
-            await post(`/api/reserves/${it.id}`, {init_data: init}, "DELETE");
+            await post(`/api/reserves/${it.id}`, {init_data: init, reason}, "DELETE");
             detail.classList.add("hidden");
             const currentTitle = listTitle.textContent || "Список резервов";
             if (/Непонятные/i.test(currentTitle)) await loadList({unknown: 1, title: currentTitle});
