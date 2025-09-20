@@ -1,29 +1,26 @@
 import asyncio
-from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
-from app.config import settings
-from aiogram.client.bot import DefaultBotProperties
+import logging
+from aiogram import Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
+from aiogram.client.bot import DefaultBotProperties
+from aiogram.filters import CommandStart
+from aiogram.types import Message
+from app.config import settings
+
+logging.basicConfig(level=logging.INFO)
 
 bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
-
-
-from aiogram import Router
-from aiogram.types import Message
-
-router = Router()
-
-@router.message(CommandStart())
+bot_router = Router()
+dp.include_router(bot_router)
+@bot_router.message(CommandStart())
 async def start(message: Message):
-    # Никаких клавиатур — просто текст
     await message.answer("Привет! Открой мини‑приложение через кнопку в меню бота.")
 
-
-
-def main():
-    asyncio.run(dp.start_polling(bot))
-
+async def main():
+                         # ← подключаем роутер
+    await bot.delete_webhook(drop_pending_updates=True)  # ← снимаем вебхук
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
