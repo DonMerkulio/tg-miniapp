@@ -112,3 +112,14 @@ p{color:var(--muted)}
   to  { transform: translateZ(0) rotate(360deg); }
 }
 
+/* Spinner для обычной кнопки */
+.btn.loading{
+  position:relative; pointer-events:none; color:transparent;
+}
+.btn.loading::after{
+  content:""; position:absolute; top:50%; left:50%;
+  width:18px; height:18px; margin:-9px 0 0 -9px;
+  border:2px solid #e5e5ea; border-top-color:#111;
+  border-radius:50%; animation:spin .8s linear infinite;
+}
+

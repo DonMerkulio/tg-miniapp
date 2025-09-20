@@ -1,17 +1,25 @@
 from fastapi import APIRouter, Response, Body, HTTPException, Path
 from typing import Sequence
-from ..loaders import (
-    PRODUCTS, RESERVED_IDS, searchable_fields, all_categories, all_parts,
-    parts_buckets, map_part_to_bucket, refresh_from_api, refresh_reserves
-)
+
+from .realtime import notify_inventory_changed
+from ..models import User
+from .reserves import _fetch_reserved_items, ADMIN_RE, _name_by_tgid
+from ..loaders import (RESERVED_IDS, searchable_fields, all_categories,
+                       parts_buckets, map_part_to_bucket
+                       )
 from ..schemas import Product
-import csv, io, html, asyncio
-from ..security import validate_init_data, extract_tg_id
-from aiogram import Bot
+import csv, io, asyncio
 from ..config import settings
 from ..exports import build_prices_xlsx
 from aiogram.exceptions import TelegramBadRequest
 import aiohttp, httpx
+from fastapi import Body, HTTPException, Path
+from ..security import validate_init_data, extract_tg_id
+from ..loaders import PRODUCTS, refresh_from_api, refresh_reserves
+from aiogram import Bot
+from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
+import html
 
 router = APIRouter(prefix="/api")
 
@@ -320,14 +328,16 @@ async def set_reserve(
         till: str | None = Body(None, embed=True),
 ):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
 
-    # проверка админа
+    # проверка админа + имя из БД
     is_admin = False
-    admin_tag = f"id:{tg_id}"
     admin_name = ""
+    admin_tag = f"id:{tg_id}"
     try:
         from sqlalchemy.orm import Session
         from ..db import SessionLocal
@@ -343,37 +353,41 @@ async def set_reserve(
     if not is_admin:
         raise HTTPException(status_code=403, detail="forbidden")
 
-    # дефолт till = +7 дней
-    from datetime import date, timedelta
-    if not till:
-        till = (date.today() + timedelta(days=7)).isoformat()
+    # МСК без ZoneInfo: UTC+3 и +4 дня
+    from datetime import datetime, timedelta
+    msk_today = (datetime.utcnow() + timedelta(hours=3)).date()
+    reserve_date = (msk_today + timedelta(days=4)).isoformat()
 
     p = _get_product(zap)
     if not p:
         raise HTTPException(status_code=404, detail="product not found")
 
-    # не даём отправить дважды параллельно
     lock = _get_lock(zap)
     async with lock:
-        payload_comment = f"[admin: {admin_tag}] {(comment or '').strip()}".strip()
-        url = "https://avax.by/api/set_reserve/DueMQ88!Sm43"
+        payload_comment = f"[admin: {admin_name or f'id:{tg_id}'} ({tg_id})] {(comment or '').strip()}".strip()
+
+        url = f"{settings.api_base}/api/items.php?action=change_status"
+        body = {
+            "user_id": settings.api_user_id,
+            "item_ids": [zap],
+            "status": 2,
+            "options": {"reserve_date": reserve_date, "comment": payload_comment}
+        }
         try:
-            async with httpx.AsyncClient(timeout=20) as cli:
-                resp = await cli.post(url, data={"comment": payload_comment, "till": till, "zap": str(zap)})
+            async with httpx.AsyncClient(timeout=25) as cli:
+                resp = await cli.put(url, json=body)
                 if resp.status_code >= 400:
                     raise HTTPException(status_code=503, detail="no connection to inventory")
-                _ = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"ok": True}
         except HTTPException:
             raise
         except Exception:
             raise HTTPException(status_code=503, detail="no connection to inventory")
 
-        # форс-рефреш после изменения статуса
+        # форс‑обновления и live‑нотификация
         try:
             await refresh_from_api(force=True)
         except Exception as e:
             print("reserve force refresh error:", e)
-        # форс‑обновить кеш резервов и оповестить фронт
         try:
             changed = await refresh_reserves(force=True)
             if changed:
@@ -393,39 +407,47 @@ async def set_reserve(
 
             def add(label, value):
                 v = (value or "").strip()
-                if v: lines.append(f"<b>{html.escape(label)}:</b> {html.escape(v)}")
+                if v:
+                    lines.append(f"<b>{html.escape(label)}:</b> {html.escape(v)}")
 
             title = f"{p.brand} {p.model}".strip()
             header = f"🟡 <b>Резерв</b> — {html.escape(title)}"
-            add("Запчасть", p.part);
-            add("Год", p.year);
+            add("Запчасть", p.part)
+            add("Год", p.year)
             add("Топливо", r.get("ТОПЛИВО", ""))
-            vol = (r.get("ОБЪЕМ", "") or "").strip();
+            vol = (r.get("ОБЪЕМ", "") or "").strip()
             et = (r.get("ТИП ДВИГАТЕЛЯ", "") or "").strip()
-            if vol or et: add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et}")
-            add("Коробка", r.get("КОРОБКА", ""));
+            if vol or et:
+                add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et}")
+            add("Коробка", r.get("КОРОБКА", ""))
             add("Кузов", r.get("ТИП КУЗОВА", ""))
-            if p.price or p.currency: add("Цена", f"{p.price or ''} {p.currency or ''}")
+            if p.price or p.currency:
+                add("Цена", f"{p.price or ''} {p.currency or ''}")
             add("На складе", r.get("Склад", ""))
             razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
-            if razb: add("Разборочный", razb)
-            add("VIN", r.get("VIN", ""));
+            if razb:
+                add("Разборочный", razb)
+            add("VIN", r.get("VIN", ""))
             add("VRN", r.get("VRN", ""))
-            add("Резерв до", till or "");
+            add("Резерв до", reserve_date)
             add("Админ", admin_name or f"id:{tg_id}")
-            if comment: add("Комментарий", comment)
+            if comment:
+                add("Комментарий", comment)
+
             text = header + "\n" + "\n".join(lines)
-            await bot.send_message(chat_id=-1001811638529, message_thread_id=14,
-                                   text=text, parse_mode="HTML", disable_web_page_preview=True)
+            kwargs = {"chat_id": int(settings.notify_chat_id_reserve)}
+            if getattr(settings, "notify_thread_id_reserve", 0):
+                kwargs["message_thread_id"] = int(settings.notify_thread_id_reserve)
+            await bot.send_message(**kwargs, text=text, parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
             print("reserve notify error:", e)
         finally:
             try:
-                await bot.session.close()  # type: ignore
+                await bot.session.close()
             except:
                 pass
 
-    return {"ok": True, "till": till}
+        return {"ok": True, "till": reserve_date}
 
 
 @router.post("/product/{pid}/send_photos")
@@ -516,6 +538,35 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
         await bot.session.close()
 
 
+@router.post("/reserve/remove")
+async def remove_reserve(init_data: str = Body(..., embed=True), zap: int = Body(..., embed=True)):
+    ok = validate_init_data(init_data)
+    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    tg_id = extract_tg_id(ok.get("user"))
+    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    # тут же проверка администратора как в set_reserve
+
+    url = f"{settings.api_base}/api/items.php?action=change_status"
+    body = {"user_id": settings.api_user_id, "item_ids": [zap], "status": 0, "options": {}}
+    try:
+        async with httpx.AsyncClient(timeout=25) as cli:
+            r = await cli.put(url, json=body)
+            if r.status_code >= 400:
+                raise HTTPException(status_code=503, detail="no connection to inventory")
+    except Exception:
+        raise HTTPException(status_code=503, detail="no connection to inventory")
+
+    try:
+        await refresh_from_api(force=True)
+        changed = await refresh_reserves(force=True)
+        if changed:
+            from .realtime import notify_inventory_changed
+            notify_inventory_changed()
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 @router.post("/refresh")
 async def force_refresh():
     await refresh_from_api(force=True)
@@ -530,4 +581,228 @@ async def force_refresh():
                 pass
     except Exception as e:
         print("force_refresh: refresh_reserves failed:", e)
+    return {"ok": True}
+
+
+@router.post("/unreserve")
+async def unset_reserve(
+        init_data: str = Body(..., embed=True),
+        zap: int = Body(..., embed=True),
+):
+    ok = validate_init_data(init_data)
+    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    tg_id = extract_tg_id(ok.get("user"))
+    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+
+    # тот же чек админа, что и выше
+    is_admin = False
+    try:
+        from sqlalchemy.orm import Session
+        from ..db import SessionLocal
+        from ..models import User
+        with SessionLocal() as s:  # type: ignore
+            u = s.query(User).filter(User.tg_id == tg_id).first()
+            is_admin = bool(u and u.is_admin) or (str(tg_id) == str(settings.admin_id))
+    except Exception:
+        is_admin = (str(tg_id) == str(settings.admin_id))
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    url = f"{settings.inventory_api}?action=change_status"
+    payload = {
+        "user_id": settings.inventory_user_id,
+        "item_ids": [int(zap)],
+        "status": 0,  # вернуть на склад
+        "options": {}
+    }
+    headers = {"Content-Type": "application/json"}
+    if settings.inventory_auth:
+        headers["Authorization"] = settings.inventory_auth
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as cli:
+            resp = await cli.put(url, json=payload, headers=headers)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=503, detail="no connection to inventory")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="no connection to inventory")
+
+    # обновляем данные/резервы и дергаем SSE
+    try:
+        await refresh_from_api(force=True)
+    except Exception as e:
+        print("unreserve force refresh error:", e)
+    try:
+        changed = await refresh_reserves(force=True)
+        if changed:
+            try:
+                from .realtime import notify_inventory_changed
+                notify_inventory_changed()
+            except Exception:
+                pass
+    except Exception as e:
+        print("refresh_reserves after unreserve error:", e)
+
+    return {"ok": True}
+
+
+@router.get("/reserves")
+def reserves(q: str | None = None,
+             sort: str | None = None,
+             bucket: str | None = None,
+             offset: int = 0, limit: int = 20):
+    # те же вспомогательные, что в /products
+    def _card(p: Product):
+        d = p.model_dump()
+        r = p.__dict__.get("_raw", {})
+        d["raw"] = {
+            "КОРОБКА": r.get("КОРОБКА", ""), "ОБЪЕМ": r.get("ОБЪЕМ", ""),
+            "ТИП ДВИГАТЕЛЯ": r.get("ТИП ДВИГАТЕЛЯ", ""), "ТОПЛИВО": r.get("ТОПЛИВО", ""),
+            "МАРКИРОВКА ДВИГАТЕЛЯ": r.get("МАРКИРОВКА ДВИГАТЕЛЯ", ""), "ШРОТ": r.get("ШРОТ", ""),
+            "ВХОДНОЙ АРТИКУЛ": r.get("ВХОДНОЙ АРТИКУЛ", ""), "Склад": r.get("Склад", ""),
+        }
+        return d
+
+    def _bucket_ok(p: Product):
+        if not bucket: return True
+        raw = p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ", "")
+        key, _ = map_part_to_bucket(raw)
+        return key == bucket
+
+    scope = None  # поиск по умолчанию по основным полям
+    pool = [p for p in PRODUCTS
+            if (p.id in RESERVED_IDS) and _bucket_ok(p) and _match(p, q or "", scope)]
+    pool = _sort(pool, sort)
+
+    total = len(pool)
+    page = pool[max(0, offset): max(0, offset) + max(1, min(200, limit))]
+    return {"items": [_card(p) for p in page], "total": total, "has_more": (offset + limit) < total}
+
+
+@router.post("/reserves/refresh")
+async def reserves_force_refresh():
+    changed = await refresh_reserves(force=True)
+    return {"ok": True, "changed": bool(changed)}
+
+
+@router.patch("/reserves/{item_id}/comment")
+async def reserves_comment_edit(
+        item_id: int = Path(...),
+        init_data: str = Body(..., embed=True),
+        comment: str = Body("", embed=True),
+):
+    ok = validate_init_data(init_data)
+    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    tg_id = extract_tg_id(ok.get("user"))
+    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+
+    # — имя редактора из БД
+    editor_name = _name_by_tgid(tg_id) or "Неизвестный"
+    try:
+        with SessionLocal() as s:  # type: ignore
+            u = s.query(User).filter(User.tg_id == tg_id).first()
+            editor_name = (u.name or "").strip() if u else ""
+    except Exception:
+        pass
+
+    # — текущий item (чтоб взять старый комментарий и дату резерва)
+    items = await _fetch_reserved_items()
+    cur = next((it for it in items if str(it.get("id")) == str(item_id)), None)
+    old_full = (cur.get("comment") or "") if cur else ""
+    old_user = ADMIN_RE.sub("", old_full, count=1).strip()
+    reserve_date = (cur.get("reserve_date") or "").split(" ")[0] if cur else ""
+    if not reserve_date:  # страховочно, если пусто
+        msk = ZoneInfo("Europe/Moscow")
+        reserve_date = (datetime.now(msk).date() + timedelta(days=4)).isoformat()
+
+    # — новый полный комментарий с админ‑префиксом
+    admin_prefix = f"[admin: {editor_name or f'id:{tg_id}'} ({tg_id})]"
+    new_user = (comment or "").strip()
+    new_full = f"{admin_prefix} {new_user}".strip()
+
+    # — API: статус=2 (резерв), с прежней датой
+    url = f"{settings.inventory_api}?action=change_status"
+    payload = {
+        "user_id": settings.api_user_id,
+        "item_ids": [int(item_id)],
+        "status": 2,
+        "options": {"reserve_date": reserve_date, "comment": new_full},
+    }
+    headers = {"Content-Type": "application/json"}
+    if settings.inventory_auth: headers["Authorization"] = settings.inventory_auth
+
+    try:
+        async with httpx.AsyncClient(timeout=25) as cli:
+            r = await cli.put(url, json=payload, headers=headers)
+            if r.status_code >= 400:
+                raise HTTPException(status_code=503, detail="no connection to inventory")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=503, detail="no connection to inventory")
+
+    # — рефреш и нотификация каталога
+    try:
+        await refresh_from_api(force=True)
+    except Exception:
+        pass
+    try:
+        changed = await refresh_reserves(force=True)
+        if changed:
+            try:
+                notify_inventory_changed()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # — TG уведомление
+    try:
+        bot = Bot(settings.bot_token)
+        p = next((p for p in PRODUCTS if int(p.id) == int(item_id)), None)
+
+        lines = []
+
+        def add(lbl, val):
+            v = (val or "").strip()
+            if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+
+        header = "✏️ <b>Изменение комментария резерва</b>"
+        if p:
+            r = p.__dict__.get("_raw", {})
+            title = f"{p.brand} {p.model}".strip()
+            header += f" — {html.escape(title)}"
+            add("Запчасть", p.part)
+            add("Год", p.year)
+            add("Топливо", r.get("ТОПЛИВО", ""))
+            vol = (r.get("ОБЪЕМ", "") or "").strip()
+            et = (r.get("ТИП ДВИГАТЕЛЯ", "") or "").strip()
+            if vol or et: add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et}")
+            add("Коробка", r.get("КОРОБКА", ""))
+            add("Кузов", r.get("ТИП КУЗОВА", ""))
+            if p.price or p.currency: add("Цена", f"{p.price or ''} {p.currency or ''}")
+            add("На складе", r.get("Склад", ""))
+            razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
+            if razb: add("Разборочный", razb)
+
+        lines.append(f"<b>До:</b> “{html.escape(old_user)}”")
+        lines.append(f"<b>После:</b> “{html.escape(new_user)}”")
+        editor_line = editor_name or f"{editor_name}"
+        lines.append(f"<b>Редактировал:</b> {html.escape(editor_name)}")
+
+        text = header + "\n" + "\n".join(lines)
+        kwargs = {"chat_id": int(settings.notify_chat_id_reserve)}
+        if getattr(settings, "notify_thread_id_reserve", 0):
+            kwargs["message_thread_id"] = int(settings.notify_thread_id_reserve)
+        await bot.send_message(**kwargs, text=text, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        print("reserve comment notify error:", e)
+    finally:
+        try:
+            await bot.session.close()
+        except:
+            pass
+
     return {"ok": True}

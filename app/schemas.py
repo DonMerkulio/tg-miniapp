@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conlist
 from typing import List, Optional
 
 class UserCreate(BaseModel):

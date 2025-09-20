@@ -30,6 +30,18 @@ function parseDate(s) {
     return Number.isNaN(t) ? null : new Date(t);
 }
 
+function mskToday() {
+    const now = new Date();
+    const ms = now.getTime() + (now.getTimezoneOffset() + 180) * 60000; // UTC→MSK
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function parseYMD(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((s || "").trim());
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+}
+
 
 async function get(url) {
     const r = await fetch(url, {cache: "no-store"});
@@ -62,16 +74,19 @@ const detailCard = qs("#detailCard");
 async function loadAdmins() {
     showBusy("Загружаю админов…");
     try {
-        const data = await get("/api/reserves/admins?" + new URLSearchParams({init_data: init}));
+        const data = await get("/api/reserves/admins");
         adminsEl.innerHTML = "";
-        data.items.forEach(it => {
+        (data.admins || []).forEach(a => {
             const card = document.createElement("div");
-            card.className = "ship-card";
-            card.innerHTML = `<div>
-        <div class="title">${esc(it.label)}</div>
-        <div class="meta">Резервов: ${it.count}</div>
-      </div>`;
-            card.addEventListener("click", () => loadList({tag: it.tag, title: `Резервы — ${it.label}`}));
+            card.className = "admin-card";
+            card.innerHTML = `
+        <div>
+          <div class="title">${esc(a.name)} (${esc(a.tg_id)})</div>
+          <div class="meta">Резервов: ${a.count}</div>
+        </div>`;
+            card.addEventListener("click", () =>
+                loadList({admin: a.tg_id, title: `Резервы — ${a.name} (${a.tg_id})`})
+            );
             adminsEl.appendChild(card);
         });
         unknownCountEl.textContent = data.unknown ? `Непонятные: ${data.unknown}` : "";
@@ -81,40 +96,37 @@ async function loadAdmins() {
     }
 }
 
+
 function reserveCard(it) {
-    const c = document.createElement("div");
-    c.className = "ship-card";
-    c.setAttribute("data-id", String(it.id));
-    // подсказка: двигатель + маркировка + разборочный
-    const engineLine = [it.engine_mark].filter(Boolean).join(" ");
-    const razbor = it.razbor ? ` • ${esc(it.razbor)}` : "";
-    c.innerHTML = `
-    <div>
-      <div class="title">${esc(it.brand)} ${esc(it.model)} • ${esc(it.part)}</div>
-      <div class="meta">${esc(it.year)}${engineLine ? " • " + esc(engineLine) : ""}${razbor}</div>
-      <div class="meta">Резерв до: ${esc(it.till || "—")}</div>
-      <div class="meta">${it.user_comment ? esc(it.user_comment) : "Комментарий: —"}</div>
-    </div>`;
-    // подсветка: если резерву > 3 дней — красный
-    const dt = parseDate(it.till);
-    if (dt) {
-        const days = Math.floor((Date.now() - dt.getTime()) / 86400000);
-        if (days > 3) c.classList.add('red');
+    const wrap = document.createElement('div');
+    wrap.className = 'res-card';
+
+    const till = parseYMD(it.reserve_till);
+    if (till) {
+        const daysLeft = Math.floor((till - mskToday()) / 86400000);
+        // резерву >3 дней (осталось ≤1 день при сроке 4 дня) → красный
+        if (daysLeft <= 1) wrap.classList.add('red');
     }
 
-    return c;
+    wrap.innerHTML = `
+    <div class="title">${esc(it.brand)} ${esc(it.model)} • ${esc(it.part)}</div>
+    <div class="meta">${esc(it.year || '')}</div>
+    <div class="meta">Резерв до: ${it.reserve_till ? esc(it.reserve_till.split(' ')[0]) : '—'}</div>
+    <div class="meta">Комментарий: ${it.comment ? esc(it.comment) : '—'}</div>
+  `;
+    return wrap;
 }
 
-async function loadList({tag = null, unknown = null, title = "Список резервов"} = {}) {
+async function loadList({admin = null, unknown = null, title = "Список резервов"} = {}) {
     listTitle.textContent = title;
     showBusy("Загружаю резервы…");
     try {
-        const qsParams = new URLSearchParams({init_data: init});
-        if (tag) qsParams.set("tag", tag);
-        if (unknown) qsParams.set("unknown", "1");
-        const data = await get("/api/reserves?" + qsParams.toString());
+        const qsParams = new URLSearchParams();
+        if (unknown) qsParams.set("admin", "_");          // без тега [admin: …]
+        else if (admin) qsParams.set("admin", admin);     // tg_id админа
+        const data = await get("/api/reserves/list?" + qsParams.toString());
         listEl.innerHTML = "";
-        data.items.forEach(it => {
+        (data.items || []).forEach(it => {
             const card = reserveCard(it);
             card.addEventListener("click", () => openDetail(it));
             listEl.appendChild(card);
@@ -123,6 +135,7 @@ async function loadList({tag = null, unknown = null, title = "Список ре�
         hideBusy();
     }
 }
+
 
 function openDetail(it) {
     // Детальная карточка как у товара (фото сверху), коммент редактируем — только текст без admin-префикса
@@ -142,15 +155,17 @@ function openDetail(it) {
       <div class="detail-body">
         <h3 class="detail-title">${esc(it.brand)} ${esc(it.model)}</h3>
         <div class="detail-row"><span class="detail-label">Запчасть:</span>${esc(it.part)}</div>
+        <div class="detail-row"><span class="detail-label">Разборочный:</span>${esc(it.articles)}</div>
+        
         <div class="detail-row"><span class="detail-label">Год:</span>${esc(it.year)}</div>
         <div class="detail-row"><span class="detail-label">Двигатель:</span>${esc([it.engine_mark].filter(Boolean).join(" "))}${it.razbor ? " • " + esc(it.razbor) : ""}</div>
         <div class="detail-row"><span class="detail-label">Склад:</span>${esc(it.warehouse || "")}</div>
-        <div class="detail-row"><span class="detail-label">Резерв до:</span>${esc(it.till || "")}</div>
+        <div class="detail-row"><span class="detail-label">Резерв до:</span>${esc((it.reserve_till || "").split(" ")[0])}</div>
 
-        <div class="detail-row"><span class="detail-label">Комментарий:</span></div>
+        <div class="meta">Комментарий: ${it.comment ? esc(it.comment) : '—'}</div>
         <div class="detail-row">
           <textarea id="fComment" rows="3" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;resize:vertical"
-            placeholder="Введите комментарий…">${esc(it.user_comment || "")}</textarea>
+            placeholder="Введите комментарий…">${esc(it.comment || "")}</textarea>
         </div>
         <div class="detail-row"><span class="detail-label">Причина удаления:</span></div>
         <div class="detail-row">
@@ -182,23 +197,33 @@ function openDetail(it) {
     // qs("#btnClose").onclick = () => detail.classList.add("hidden");
 
     qs("#btnSave").onclick = async () => {
+        const btn = qs("#btnSave");
         const comment = (qs("#fComment").value || "").trim();
-        showBusy("Сохраняю…");
+
+        showBusy("Сохраняю комментарий…");     // модальный индикатор
+        btn.setAttribute("disabled", "true");
+
         try {
             await post(`/api/reserves/${it.id}/comment`, {
                 init_data: init,
                 comment,
                 admin_tag: it.admin_tag || null
             }, "PATCH");
+
             detail.classList.add("hidden");
-            // перезагрузим текущий список
+            window.Telegram?.WebApp?.showAlert("Комментарий сохранён");
+
             const currentTitle = listTitle.textContent || "Список резервов";
-            // если в заголовке есть "Непонятные" — грузим unknown
-            if (/Непонятные/i.test(currentTitle)) await loadList({unknown: 1, title: currentTitle});
-            else if (it.admin_tag) await loadList({tag: it.admin_tag, title: currentTitle});
-            else await loadList({title: currentTitle});
+            if (/Непонятные/i.test(currentTitle)) {
+                await loadList({unknown: 1, title: currentTitle});
+            } else if (it.admin_tg_id) {
+                await loadList({admin: it.admin_tg_id, title: currentTitle});
+            } else {
+                await loadList({title: currentTitle});
+            }
         } finally {
-            hideBusy();
+            hideBusy();                          // убрать модалку
+            btn.removeAttribute("disabled");
         }
     };
 

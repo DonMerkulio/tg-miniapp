@@ -443,12 +443,12 @@ function renderDetailHTML(p) {
     if (p.part) rows.push(rowHTML("Запчасть", esc(p.part)));
     if (r["ТОПЛИВО"]) rows.push(rowHTML("Топливо", esc(r["ТОПЛИВО"])));
     const vol = (r["ОБЪЕМ"] || "").trim(), et = (r["ТИП ДВИГАТЕЛЯ"] || "").trim();
-    if (vol || et) rows.push(rowHTML("", esc(`${vol}${vol && et ? " " : ""}${et}`)));
-    if (r["КОРОБКА"]) rows.push(rowHTML("", esc(r["КОРОБКА"])));
-    if (r["ТИП КУЗОВА"]) rows.push(rowHTML("", esc(r["ТИП КУЗОВА"])));
+    if (vol || et) rows.push(rowHTML("Объем", esc(`${vol}${vol && et ? " " : ""}${et}`)));
+    if (r["КОРОБКА"]) rows.push(rowHTML("Коробка передач", esc(r["КОРОБКА"])));
+    if (r["ТИП КУЗОВА"]) rows.push(rowHTML("Кузов", esc(r["ТИП КУЗОВА"])));
     if (p.price || p.currency) rows.push(rowHTML("Цена", esc(`${p.price || ""} ${p.currency || ""}`)));
-    if (r["ПРИВОД"]) rows.push(rowHTML("", esc(r["ПРИВОД"])));
-    if (r["Склад"]) rows.push(rowHTML("", esc(r["Склад"])));
+    if (r["ПРИВОД"]) rows.push(rowHTML("Привод", esc(r["ПРИВОД"])));
+    if (r["Склад"]) rows.push(rowHTML("Склад нахождения", esc(r["Склад"])));
     if (r["VIN"]) rows.push(rowHTML("VIN", esc(r["VIN"])));
     if (r["VRN"]) rows.push(rowHTML("VRN", esc(r["VRN"])));
 

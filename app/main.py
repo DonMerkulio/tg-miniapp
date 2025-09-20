@@ -1,10 +1,11 @@
+# app/main.py
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from .db import Base, engine
 from .routers import webapp, auth, products, admin_pages, shipments, moves, reserve_pages, reserves, user_pages, users, \
     broadcast_prices, broadcast_notify, realtime
 import asyncio
-from .loaders import refresh_from_api, background_refresher, PRODUCTS, load_products, refresh_reserves
+from .loaders import refresh_from_api, background_refresher, PRODUCTS, refresh_reserves  # ← без load_products
 
 Base.metadata.create_all(bind=engine)
 
@@ -25,15 +26,7 @@ app.include_router(realtime.router)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# API refresh hooks
-
-
-if not PRODUCTS:
-    try:
-        PRODUCTS[:] = load_products()
-    except Exception:
-        pass
-
+# ↓↓↓ УДАЛИТЬ полностью «если not PRODUCTS: PRODUCTS[:] = load_products()» ↓↓↓
 
 @app.on_event("startup")
 async def _startup():
@@ -43,5 +36,3 @@ async def _startup():
     except Exception as e:
         print("startup refresh failed:", e)
     asyncio.create_task(background_refresher())
-
-
