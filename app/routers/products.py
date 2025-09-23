@@ -455,6 +455,7 @@ async def set_reserve(
             et = (r.get("ТИП ДВИГАТЕЛЯ", "") or "").strip()
             if vol or et:
                 add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et}")
+            add("Маркировка дв.", r.get("МАРКИРОВКА ДВИГАТЕЛЯ", ""))
             add("Коробка", r.get("КОРОБКА", ""))
             add("Кузов", r.get("ТИП КУЗОВА", ""))
             if p.price or p.currency:
@@ -840,6 +841,7 @@ async def reserves_comment_edit(
             et = (r.get("ТИП ДВИГАТЕЛЯ", "") or "").strip()
             if vol or et:
                 add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et}")
+            add("Маркировка дв.", r.get("МАРКИРОВКА ДВИГАТЕЛЯ", ""))
             add("Коробка", r.get("КОРОБКА", ""))
             add("Кузов", r.get("ТИП КУЗОВА", ""))
             if p.price or p.currency:

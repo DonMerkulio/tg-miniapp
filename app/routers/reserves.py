@@ -150,26 +150,41 @@ async def _fetch_items_by_ids(ids: list[int]) -> list[dict]:
 
 
 def _fields(item: dict) -> dict:
-    f = item.get("fields") or {}
-    g = lambda key, sub="display_value": (f.get(key, {}) or {}).get(sub) or ""
-    v = lambda key: (f.get(key, {}) or {}).get("value") or ""
+    def _fields(item: dict) -> dict:
+        f = item.get("fields") or {}
+        g = lambda key, sub="display_value": (f.get(key, {}) or {}).get(sub) or ""
+        v = lambda key: (f.get(key, {}) or {}).get("value") or ""
 
-    brand = g("car_brand_id")
-    model = g("car_model_id")
-    part = g("part_id")
-    year = v("year")
-    capacity = g("capacity_id")
-    fuel = g("type_id")
-    engine_mark = v("mark_engine")
-    warehouse = g("stock_id")
+        brand = g("car_brand_id")
+        model = g("car_model_id")
+        part = g("part_id")
+        year = v("year")
+        capacity = g("capacity_id")
+        fuel = g("type_id")
+        engine_mark = v("mark_engine")
+        warehouse = re.sub(r"^#+", "", g("stock_id")).strip()  # убираем "##"
 
-    shrot, input_article, articles = _extract_articles(item)
+        # шрот + входной артикул (с подстраховкой по title)
+        sh, ia, articles = _extract_articles(item)
 
-    return dict(
-        brand=brand, model=model, part=part, year=str(year).strip(),
-        capacity=capacity, fuel=fuel, engine_mark=engine_mark,
-        warehouse=warehouse, articles=articles
-    )
+        gearbox = g("kpp_id")
+        body = g("body_id")
+        vin = v("vin_number")
+        vrn = v("vrn_number")
+
+        try:
+            price = float(item.get("price_dollar") or 0)
+        except Exception:
+            price = 0.0
+        currency = "USD" if price else ""
+
+        return dict(
+            brand=brand, model=model, part=part, year=str(year).strip(),
+            capacity=capacity, fuel=fuel, engine_mark=engine_mark,
+            gearbox=gearbox, body=body,
+            warehouse=warehouse, articles=articles,
+            vin=vin, vrn=vrn, price=price, currency=currency
+        )
 
 
 async def _send_tg(text: str) -> None:
@@ -222,16 +237,31 @@ def _msg_reserve_cancel(item: dict, admin_tag: str | None, reason: str | None) -
 
     def add(lbl, val):
         v = (val or "").strip()
-        if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+        if v:
+            lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
 
     add("Запчасть", f["part"])
     add("Год", f["year"])
+    add("Топливо", f["fuel"])
+    if f["capacity"] or f["fuel"]:
+        add("Двигатель", f"{f['capacity']}{(' ' if f['capacity'] and f['fuel'] else '')}{f['fuel']}")
+    add("Маркировка дв.", f["engine_mark"])
+    add("Коробка", f["gearbox"])
+    add("Кузов", f["body"])
+    if f["price"]:
+        add("Цена", f"{f['price']} {f['currency']}".strip())
     add("На складе", f["warehouse"])
     add("Разборочный", f["articles"])
-    if admin_tag: add("Админ", _strip_admin_prefix(admin_tag))
-    if reason: add("Причина", reason)
+    add("VIN", f["vin"])
+    add("VRN", f["vrn"])
+    if admin_tag:
+        add("Админ", _strip_admin_prefix(admin_tag))
+    if reason:
+        add("Причина", reason)
+
     header = f"🔴 <b>Снят резерв</b> — {html.escape(title)}"
     return header + "\n" + "\n".join(lines)
+
 
 
 def _photo_urls(item: dict) -> list[str]:
