@@ -359,24 +359,54 @@ async def reserves_update_comment(item_id: int, data: dict = Body(...)):
 @router.delete("/reserves/{item_id}")
 async def reserves_delete(item_id: int, data: dict | None = Body(None)):
     reason = (data or {}).get("reason") or ""
-    init_data = (data or {}).get("init_data") or ""
 
-    ok = validate_init_data(init_data)
-    tg_id = extract_tg_id(ok.get("user")) if ok else None
-    admin_tag = None
-    if tg_id:
-        name = _name_by_tgid(tg_id) or ""
-        admin_tag = f"[admin: {name or f'id:{tg_id}'} ({tg_id})]"
+    # 1) берём карточку ДО снятия (чтобы было что показать в уведомлении)
+    try:
+        items_before = await _fetch_items_by_ids([item_id])
+        item_before = items_before[0] if items_before else None
+    except Exception:
+        item_before = None
 
-    # берём карточку ДО смены статуса, чтобы в нотификации были все поля
-    items = await _fetch_items_by_ids([item_id])
-
-    # вернуть на склад
+    # 2) снимаем резерв (status=0)
     await _change_status([item_id], status=0, options={})
 
-    # уведомление в чат
-    if items:
-        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=admin_tag, reason=reason))
+    # 3) рефрешим кеши и даём сигнал на фронт
+    try:
+        from ..loaders import refresh_from_api, refresh_reserves
+        await refresh_from_api(force=True)
+        changed = await refresh_reserves(force=True)
+        if changed:
+            try:
+                notify_inventory_changed()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
-    notify_inventory_changed()
+    # 4) уведомление в чат (как при установке/редактировании)
+    try:
+        bot = Bot(settings.bot_token)
+        if item_before:
+            text = _msg_reserve_cancel(item_before, admin_tag=None, reason=reason)
+        else:
+            safe_reason = html.escape(reason) if reason else ""
+            text = f"🔴 <b>Снят резерв</b> — ID {item_id}" + (f"\n<b>Причина:</b> {safe_reason}" if safe_reason else "")
+
+        kwargs = {
+            "chat_id": int(settings.notify_chat_id_reserve),
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if getattr(settings, "notify_thread_id_reserve", 0):
+            kwargs["message_thread_id"] = int(settings.notify_thread_id_reserve)
+        await bot.send_message(**kwargs)
+    except Exception as e:
+        print("reserve cancel notify error:", e)
+    finally:
+        try:
+            await bot.session.close()
+        except:
+            pass
+
     return {"ok": True}
