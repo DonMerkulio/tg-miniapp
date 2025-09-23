@@ -15,7 +15,7 @@ from .reserves import (
     _send_tg as _resv_send_tg,
     _msg_reserve_cancel as _msg_reserve_cancel,
     _fetch_items_by_ids as _fetch_items_by_ids,
-    _unreserve_and_notify as _unreserve_and_notify,   # ← ДОБАВЬ ЭТО
+    _unreserve_and_notify as _unreserve_and_notify,   # используется для снятия + уведомления
 )
 
 from ..models import User
@@ -471,6 +471,8 @@ async def set_reserve(
             razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
             if razb:
                 add("Разборочный", razb)
+            # Описание (из Product.description или RAW)
+            add("Описание", (p.description or r.get("ОПИСАНИЕ", "")))
             add("VIN", r.get("VIN", ""))
             add("VRN", r.get("VRN", ""))
             add("Резерв до", reserve_date)
@@ -599,9 +601,9 @@ async def remove_reserve(
 ):
     ok = validate_init_data(init_data)
     if not ok: raise HTTPException(status_code=401, detail="invalid initData")
-    # одна общая реализация
+    # единая реализация уведомления о снятии + причина
     await _unreserve_and_notify(int(zap), reason or "")
-    # обновление кешей (можно оставить как есть)
+    # обновление кешей/веб‑вида
     try:
         await refresh_from_api(force=True)
         if await refresh_reserves(force=True):
@@ -609,7 +611,6 @@ async def remove_reserve(
     except Exception:
         pass
     return {"ok": True}
-
 
 
 @router.post("/refresh")
@@ -845,6 +846,8 @@ async def reserves_comment_edit(
             razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
             if razb:
                 add("Разборочный", razb)
+            # Описание
+            add("Описание", (p.description or r.get("ОПИСАНИЕ", "")))
 
         lines.append(f"<b>До:</b> “{html.escape(old_user)}”")
         lines.append(f"<b>После:</b> “{html.escape(new_user)}”")

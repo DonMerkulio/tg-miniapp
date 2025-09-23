@@ -159,11 +159,11 @@ def _fields(item: dict) -> dict:
     part = g("part_id")
     year = str(v("year")).strip()
 
-    capacity = g("capacity_id")  # 2.0 / 1.9 …
-    fuel = g("type_id")  # бензин / дизель
-    engine_mark = v("mark_engine")  # N47D20A и т.п.
-    gearbox = g("kpp_id")  # МКПП/АКПП
-    body = g("body_id")  # Седан/Хэтчбек…
+    capacity = g("capacity_id")          # 2.0 / 1.9 …
+    fuel = g("type_id")                  # бензин / дизель
+    engine_mark = v("mark_engine")       # N47D20A и т.п.
+    gearbox = g("kpp_id")                # МКПП/АКПП
+    body = g("body_id")                  # Седан/Хэтчбек…
     warehouse = g("stock_id")
 
     # разборочный «Буква Номер»
@@ -173,13 +173,14 @@ def _fields(item: dict) -> dict:
     currency = "USD" if price else ""
     vin = v("vin_number")
     vrn = v("vrn_number")
+    description = v("description")
 
     return {
         "brand": brand, "model": model, "part": part, "year": year,
         "capacity": capacity, "fuel": fuel, "engine_mark": engine_mark,
         "gearbox": gearbox, "body": body, "warehouse": warehouse,
         "articles": articles, "price": price, "currency": currency,
-        "vin": vin, "vrn": vrn,
+        "vin": vin, "vrn": vrn, "description": description,
     }
 
 
@@ -218,23 +219,22 @@ def _msg_reserve_set(item: dict, reserve_date: str, admin_tag: str | None, comme
     f = _fields(item)
     title = f"{(f.get('brand') or '').strip()} {(f.get('model') or '').strip()}".strip()
     lines = []
-
     def add(lbl, val):
         v = (val or "").strip()
         if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
 
     add("Запчасть", f.get("part"))
     add("Год", f.get("year"))
-    cap, fu = f.get("capacity", ""), f.get("fuel", "")
+    cap, fu = f.get("capacity",""), f.get("fuel","")
     if cap or fu: add("Двигатель", f"{cap}{(' ' if cap and fu else '')}{fu}")
     add("Маркировка дв.", f.get("engine_mark"))
     add("Коробка", f.get("gearbox"))
     add("Кузов", f.get("body"))
-    if f.get("price"): add("Цена", f"{f.get('price')} {f.get('currency', '')}".strip())
+    if f.get("price"): add("Цена", f"{f.get('price')} {f.get('currency','')}".strip())
     add("На складе", f.get("warehouse"))
     add("Разборочный", f.get("articles"))
-    add("VIN", f.get("vin"));
-    add("VRN", f.get("vrn"))
+    add("Описание", f.get("description"))
+    add("VIN", f.get("vin")); add("VRN", f.get("vrn"))
     add("Резерв до", reserve_date)
     if admin_tag: add("Админ", _strip_admin_prefix(admin_tag))
     if comment: add("Комментарий", _strip_admin_prefix(comment))
@@ -245,23 +245,22 @@ def _msg_reserve_cancel(item: dict, admin_tag: str | None, reason: str | None) -
     f = _fields(item)
     title = f"{(f.get('brand') or '').strip()} {(f.get('model') or '').strip()}".strip()
     lines = []
-
     def add(lbl, val):
         v = (val or "").strip()
         if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
 
     add("Запчасть", f.get("part"))
     add("Год", f.get("year"))
-    cap, fu = f.get("capacity", ""), f.get("fuel", "")
+    cap, fu = f.get("capacity",""), f.get("fuel","")
     if cap or fu: add("Двигатель", f"{cap}{(' ' if cap and fu else '')}{fu}")
     add("Маркировка дв.", f.get("engine_mark"))
     add("Коробка", f.get("gearbox"))
     add("Кузов", f.get("body"))
-    if f.get("price"): add("Цена", f"{f.get('price')} {f.get('currency', '')}".strip())
+    if f.get("price"): add("Цена", f"{f.get('price')} {f.get('currency','')}".strip())
     add("На складе", f.get("warehouse"))
     add("Разборочный", f.get("articles"))
-    add("VIN", f.get("vin"));
-    add("VRN", f.get("vrn"))
+    add("Описание", f.get("description"))
+    add("VIN", f.get("vin")); add("VRN", f.get("vrn"))
     if admin_tag: add("Админ", _strip_admin_prefix(admin_tag))
     if reason: add("Причина", reason)
     return f"🔴 <b>Снят резерв</b> — {html.escape(title)}\n" + "\n".join(lines)
