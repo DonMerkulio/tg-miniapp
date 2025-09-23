@@ -17,6 +17,30 @@ MSK = timezone(timedelta(hours=3))
 from ..db import SessionLocal
 from ..models import User
 
+
+def _extract_articles(item: dict) -> tuple[str, str, str]:
+    """
+    Возвращает (shrot_letter, input_article, 'LETTER NNN').
+    Если полей нет — пытается вытащить из title (… ##Москва A 590).
+    """
+    f = item.get("fields") or {}
+    sh = ((f.get("shrot_id") or {}).get("display_value") or "").strip()
+    ia = ((f.get("input_article") or {}).get("value") or "").strip()
+
+    if not sh or not ia:
+        title = (item.get("title") or "").strip()
+        # ищем «##<склад> <буква> <номер>»
+        m = re.search(r"##\S+\s+([A-Za-zА-Яа-я])\s+(\d+)", title)
+        if m:
+            if not sh:
+                sh = m.group(1).upper()
+            if not ia:
+                ia = m.group(2)
+
+    art = " ".join(x for x in [sh, ia] if x).strip()
+    return sh, ia, art
+
+
 def _name_by_tgid(tg: str | int) -> str | None:
     try:
         with SessionLocal() as s:  # type: ignore
@@ -91,20 +115,20 @@ def _fields(item: dict) -> dict:
     f = item.get("fields") or {}
     g = lambda key, sub="display_value": (f.get(key, {}) or {}).get(sub) or ""
     v = lambda key: (f.get(key, {}) or {}).get("value") or ""
-    brand = g("car_brand_id");
-    model = g("car_model_id");
-    part = g("part_id");
-    year = v("year")
-    capacity = g("capacity_id");
-    fuel = g("type_id");
-    engine_mark = v("mark_engine")
-    warehouse = g("stock_id")
-    shrot = g("shrot_id");
-    input_article = v("input_article")
-    articles = " ".join(x for x in [shrot, input_article] if x).strip()
-    return dict(brand=brand, model=model, part=part, year=str(year).strip(),
-                capacity=capacity, fuel=fuel, engine_mark=engine_mark,
-                warehouse=warehouse, articles=articles)
+
+    brand = g("car_brand_id"); model = g("car_model_id"); part = g("part_id")
+    year = v("year"); capacity = g("capacity_id"); fuel = g("type_id")
+    engine_mark = v("mark_engine"); warehouse = g("stock_id")
+
+    # ↓↓↓ было: shrot = g("shrot_id"); input_article = v("input_article"); articles = " ".join(...)
+    shrot, input_article, articles = _extract_articles(item)
+
+    return dict(
+        brand=brand, model=model, part=part, year=str(year).strip(),
+        capacity=capacity, fuel=fuel, engine_mark=engine_mark,
+        warehouse=warehouse, articles=articles
+    )
+
 
 
 async def _send_tg(text: str) -> None:
@@ -196,9 +220,7 @@ def _card(item: dict) -> dict:
     part = (f.get("part_id", {}).get("display_value") or "").strip()
     year = str((f.get("year", {}).get("value") or "")).strip()
 
-    shrot = (f.get("shrot_id", {}).get("display_value") or "").strip()
-    input_article = (f.get("input_article", {}).get("value") or "").strip()
-    articles = " ".join(x for x in [shrot, input_article] if x).strip()
+    _, _, articles = _extract_articles(item)
 
     engine_mark = (f.get("mark_engine", {}).get("value") or "").strip()
     warehouse = (f.get("stock_id", {}).get("display_value") or "").strip()
