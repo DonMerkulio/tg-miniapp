@@ -4,11 +4,13 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from fastapi import APIRouter, Query, Body, HTTPException
 from aiogram import Bot
+
 from ..config import settings
 from .realtime import notify_inventory_changed
 from ..db import SessionLocal
 from ..models import User
 from ..security import validate_init_data, extract_tg_id
+from ..loaders import PRODUCTS  # ← fallback-источник, если админ-API не отдаст карточку
 
 router = APIRouter(prefix="/api", tags=["reserves"])
 
@@ -184,37 +186,6 @@ def _fields(item: dict) -> dict:
     }
 
 
-async def _unreserve_and_notify(item_id: int, reason: str | None = "") -> None:
-    # карточку берём ДО смены статуса
-    items = await _fetch_items_by_ids([int(item_id)])
-    # снять резерв
-    await _change_status([int(item_id)], status=0, options={})
-    # уведомить TG
-    if items:
-        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason or ""))
-    notify_inventory_changed()
-
-
-async def _send_tg(text: str) -> None:
-    bot = Bot(settings.bot_token)
-    try:
-        kwargs = {
-            "chat_id": int(settings.notify_chat_id_reserve),
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
-        tid = getattr(settings, "notify_thread_id_reserve", 0)
-        if tid and int(tid) > 0:
-            kwargs["message_thread_id"] = int(tid)
-        await bot.send_message(**kwargs)
-    except Exception as e:
-        # чтобы видеть причину, если Telegram отвергает сообщение
-        print("reserve notify error:", e, flush=True)
-    finally:
-        await bot.session.close()
-
-
 def _msg_reserve_set(item: dict, reserve_date: str, admin_tag: str | None, comment: str) -> str:
     f = _fields(item)
     title = f"{(f.get('brand') or '').strip()} {(f.get('model') or '').strip()}".strip()
@@ -264,6 +235,77 @@ def _msg_reserve_cancel(item: dict, admin_tag: str | None, reason: str | None) -
     if admin_tag: add("Админ", _strip_admin_prefix(admin_tag))
     if reason: add("Причина", reason)
     return f"🔴 <b>Снят резерв</b> — {html.escape(title)}\n" + "\n".join(lines)
+
+
+# --- fallback: формирование сообщения из витринного Product ---
+def _msg_reserve_cancel_from_product(p, reason: str | None) -> str:
+    r = p.__dict__.get("_raw", {})
+    title = f"{(p.brand or '').strip()} {(p.model or '').strip()}".strip()
+    lines = []
+
+    def add(lbl, val):
+        v = (val or "").strip()
+        if v:
+            lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+
+    add("Запчасть", p.part)
+    add("Год", p.year)
+    fuel = r.get("ТОПЛИВО", "")
+    vol = (r.get("ОБЪЕМ", "") or "").strip()
+    et  = (r.get("ТИП ДВИГАТЕЛЯ", "") or "").strip()
+    if vol or et: add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et or fuel}")
+    add("Маркировка дв.", r.get("МАРКИРОВКА ДВИГАТЕЛЯ", ""))
+    add("Коробка", r.get("КОРОБКА", ""))
+    add("Кузов", r.get("ТИП КУЗОВА", ""))
+    if p.price or p.currency: add("Цена", f"{p.price or ''} {p.currency or ''}".strip())
+    add("На складе", r.get("Склад", ""))
+    art = " ".join(x for x in [(r.get("ШРОТ") or "").strip(),
+                               (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
+    add("Разборочный", art)
+    add("Описание", r.get("ОПИСАНИЕ", ""))
+    add("VIN", r.get("VIN", "")); add("VRN", r.get("VRN", ""))
+    if reason: add("Причина", reason)
+    return f"🔴 <b>Снят резерв</b> — {html.escape(title)}\n" + "\n".join(lines)
+
+
+async def _send_tg(text: str) -> None:
+    bot = Bot(settings.bot_token)
+    try:
+        kwargs = {
+            "chat_id": int(settings.notify_chat_id_reserve),
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        tid = getattr(settings, "notify_thread_id_reserve", 0)
+        if tid and int(tid) > 0:
+            kwargs["message_thread_id"] = int(tid)
+        await bot.send_message(**kwargs)
+    except Exception as e:
+        print("reserve notify error:", e, flush=True)
+    finally:
+        await bot.session.close()
+
+
+async def _unreserve_and_notify(item_id: int, reason: str | None = "") -> None:
+    # карточку берём ДО смены статуса
+    items = await _fetch_items_by_ids([int(item_id)])
+    # снять резерв
+    await _change_status([int(item_id)], status=0, options={})
+    # уведомить TG
+    if items:
+        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason or ""))
+    else:
+        # fallback: берём из витринного кеша и всё равно шлём полное описание
+        p = next((p for p in PRODUCTS if int(p.id) == int(item_id)), None)
+        if p:
+            await _send_tg(_msg_reserve_cancel_from_product(p, reason or ""))
+        else:
+            txt = f"🔴 <b>Снят резерв</b> — ID {int(item_id)}"
+            if (reason or "").strip():
+                txt += f"\n<b>Причина:</b> {html.escape(reason)}"
+            await _send_tg(txt)
+    notify_inventory_changed()
 
 
 def _photo_urls(item: dict) -> list[str]:
@@ -402,15 +444,19 @@ async def reserves_delete(
     # снять резерв
     await _change_status([item_id], status=0, options={})
 
-    # уведомить чат (полное описание + «Маркировка дв.» + причина)
+    # уведомить чат
     try:
         if items:
             await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason))
         else:
-            txt = f"🔴 <b>Снят резерв</b> — ID {item_id}"
-            if reason.strip():
-                txt += f"\n<b>Причина:</b> {html.escape(reason)}"
-            await _send_tg(txt)
+            p = next((p for p in PRODUCTS if int(p.id) == int(item_id)), None)
+            if p:
+                await _send_tg(_msg_reserve_cancel_from_product(p, reason))
+            else:
+                txt = f"🔴 <b>Снят резерв</b> — ID {item_id}"
+                if reason.strip():
+                    txt += f"\n<b>Причина:</b> {html.escape(reason)}"
+                await _send_tg(txt)
     except Exception as e:
         print("reserve delete notify error:", e, flush=True)
 
