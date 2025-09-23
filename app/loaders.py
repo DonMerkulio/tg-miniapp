@@ -133,10 +133,21 @@ def _row_to_product(item: dict) -> Product:
         "ВИДЕО": (item.get("video_url") or "").strip(),
         "ФОТО": "",  # не используется дальше
     }
-    p = Product(id=pid, brand=brand, model=model, year=str(year or ""),
-                part=part, price=price, currency=currency,
-                photos=photos, description=raw["ОПИСАНИЕ"], warehouse=raw["Склад"])
+    stock_status = str(item.get("stock_status") or "0").strip()
+    deleted = str(item.get("deleted") or "0").strip()
+    quantity = int(float(item.get("quantity") or 0))
+
+    p = Product(
+        id=pid, brand=brand, model=model, year=str(year or ""),
+        part=part, price=price, currency=currency,
+        photos=photos, description=raw["ОПИСАНИЕ"], warehouse=raw["Склад"]
+    )
     p.__dict__["_raw"] = raw
+
+    # ↓↓↓ добавьте это
+    p.__dict__["_stock_status"] = str(item.get("stock_status") or "0").strip()
+    p.__dict__["_deleted"] = str(item.get("deleted") or "0").strip()
+    p.__dict__["_quantity"] = quantity
     return p
 
 

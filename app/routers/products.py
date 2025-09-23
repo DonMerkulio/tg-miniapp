@@ -21,7 +21,6 @@ from ..exports import build_prices_xlsx
 from ..config import settings
 from ..schemas import Product
 
-
 router = APIRouter(prefix="/api")
 
 
@@ -137,9 +136,11 @@ def products(q: str | None = None, sort: str | None = None,
 
     items_all = [
         p for p in PRODUCTS
-        if _cat_ok(p) and _bucket_ok(p) and _part_ok(p) and _match(p, q or "", scope or None)
-           and (show_reserved or (p.id not in RESERVED_IDS))
+        if _active_only(p)
+           and _cat_ok(p) and _bucket_ok(p) and _part_ok(p)
+           and _match(p, q or "", scope or None)
     ]
+
     items_all = _sort(items_all, sort)
     total = len(items_all)
     page = items_all[offset: offset + limit]
@@ -316,6 +317,10 @@ def _get_product(pid: int) -> Product | None:
         if p.id == pid:
             return p
     return None
+
+
+def _active_only(p: Product) -> bool:
+    return str(p.__dict__.get("_stock_status", "0")) == "0" and str(p.__dict__.get("_deleted", "0")) == "0"
 
 
 @router.get("/product/{pid}")
