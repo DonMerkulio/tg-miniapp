@@ -232,35 +232,27 @@ def _msg_reserve_set(item: dict, reserve_date: str, admin_tag: str | None, comme
 
 def _msg_reserve_cancel(item: dict, admin_tag: str | None, reason: str | None) -> str:
     f = _fields(item)
-    title = f"{(f['brand'] or '').strip()} {(f['model'] or '').strip()}".strip()
+    title = f"{(f.get('brand') or '').strip()} {(f.get('model') or '').strip()}".strip()
     lines = []
-
     def add(lbl, val):
         v = (val or "").strip()
-        if v:
-            lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+        if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
 
-    add("Запчасть", f["part"])
-    add("Год", f["year"])
-    add("Топливо", f["fuel"])
-    if f["capacity"] or f["fuel"]:
-        add("Двигатель", f"{f['capacity']}{(' ' if f['capacity'] and f['fuel'] else '')}{f['fuel']}")
-    add("Маркировка дв.", f["engine_mark"])
-    add("Коробка", f["gearbox"])
-    add("Кузов", f["body"])
-    if f.get("price"):
-        add("Цена", f"{f['price']} {f.get('currency', '')}".strip())
-    add("На складе", f["warehouse"])
-    add("Разборочный", f["articles"])
-    add("VIN", f["vin"])
-    add("VRN", f["vrn"])
-    if admin_tag:
-        add("Админ", _strip_admin_prefix(admin_tag))
-    if reason:
-        add("Причина", reason)
+    add("Запчасть", f.get("part"))
+    add("Год", f.get("year"))
+    cap, fu = f.get("capacity",""), f.get("fuel","")
+    if cap or fu: add("Двигатель", f"{cap}{(' ' if cap and fu else '')}{fu}")
+    add("Маркировка дв.", f.get("engine_mark"))
+    add("Коробка", f.get("gearbox"))
+    add("Кузов", f.get("body"))
+    if f.get("price"): add("Цена", f"{f.get('price')} {f.get('currency','')}".strip())
+    add("На складе", f.get("warehouse"))
+    add("Разборочный", f.get("articles"))
+    add("VIN", f.get("vin")); add("VRN", f.get("vrn"))
+    if admin_tag: add("Админ", _strip_admin_prefix(admin_tag))
+    if reason: add("Причина", reason)
+    return f"🔴 <b>Снят резерв</b> — {html.escape(title)}\n" + "\n".join(lines)
 
-    header = f"🔴 <b>Снят резерв</b> — {html.escape(title)}"
-    return header + "\n" + "\n".join(lines)
 
 
 def _photo_urls(item: dict) -> list[str]:
@@ -385,26 +377,20 @@ async def reserves_update_comment(item_id: int, data: dict = Body(...)):
     return {"ok": True, "reserve_date": reserve_date}
 
 
-def _msg_reserve_cancel(item: dict, admin_tag: str | None, reason: str | None) -> str:
-    f = _fields(item)
-    title = f"{(f.get('brand') or '').strip()} {(f.get('model') or '').strip()}".strip()
-    lines = []
-    def add(lbl, val):
-        v = (val or "").strip()
-        if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+@router.delete("/reserves/{item_id}")
+async def reserves_delete(item_id: int, data: dict | None = Body(None)):
+    reason = (data or {}).get("reason") or ""
+    # берём карточку ДО смены статуса, чтобы красиво показать в TG
+    items = await _fetch_items_by_ids([item_id])
 
-    add("Запчасть", f.get("part"))
-    add("Год", f.get("year"))
-    cap, fu = f.get("capacity",""), f.get("fuel","")
-    if cap or fu: add("Двигатель", f"{cap}{(' ' if cap and fu else '')}{fu}")
-    add("Маркировка дв.", f.get("engine_mark"))
-    add("Коробка", f.get("gearbox"))
-    add("Кузов", f.get("body"))
-    if f.get("price"): add("Цена", f"{f.get('price')} {f.get('currency','')}".strip())
-    add("На складе", f.get("warehouse"))
-    add("Разборочный", f.get("articles"))
-    add("VIN", f.get("vin")); add("VRN", f.get("vrn"))
-    if admin_tag: add("Админ", _strip_admin_prefix(admin_tag))
-    if reason: add("Причина", reason)
-    return f"🔴 <b>Снят резерв</b> — {html.escape(title)}\n" + "\n".join(lines)
+    # снимаем резерв
+    await _change_status([item_id], status=0, options={})
+
+    # уведомляем чат
+    if items:
+        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason))
+
+    notify_inventory_changed()
+    return {"ok": True}
+
 
