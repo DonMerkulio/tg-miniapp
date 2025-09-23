@@ -13,8 +13,8 @@ from ..db import get_db, SessionLocal
 from ..models import User
 from ..security import validate_init_data, extract_tg_id
 from ..config import settings
-from ..loaders import PRODUCTS
 from ..exports import build_prices_xlsx
+from ..loaders import PRODUCTS, RESERVED_IDS
 
 router = APIRouter(prefix="/api/broadcast", tags=["broadcast"])
 
@@ -35,14 +35,16 @@ def _pick_recipients(db: Session) -> List[User]:
     )
 
 def _build_files() -> Dict[str, bytes]:
-    engines = [p for p in PRODUCTS if (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip() == "Двигатель"]
-    nosecuts = [p for p in PRODUCTS if (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip() == "Передняя часть (ноускат) в сборе"]
-    ids_eng = {p.id for p in engines}; ids_nose = {p.id for p in nosecuts}
-    others = [p for p in PRODUCTS if p.id not in (ids_eng | ids_nose)]
+    avail = [p for p in PRODUCTS if p.id not in RESERVED_IDS]  # исключаем резервы
+
+    engines  = [p for p in avail if (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip() == "Двигатель"]
+    nosecuts = [p for p in avail if (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip() == "Передняя часть (ноускат) в сборе"]
+    ids_eng, ids_nose = {p.id for p in engines}, {p.id for p in nosecuts}
+    others = [p for p in avail if p.id not in (ids_eng | ids_nose)]
 
     out: Dict[str, bytes] = {}
-    if engines:  out["Двигатели.xlsx"]      = build_prices_xlsx(engines).getvalue()
-    if nosecuts: out["Ноускаты.xlsx"]       = build_prices_xlsx(nosecuts).getvalue()
+    if engines:  out["Двигатели.xlsx"]       = build_prices_xlsx(engines).getvalue()
+    if nosecuts: out["Ноускаты.xlsx"]        = build_prices_xlsx(nosecuts).getvalue()
     if others:   out["Прочие запчасти.xlsx"] = build_prices_xlsx(others).getvalue()
     return out
 

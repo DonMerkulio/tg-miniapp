@@ -1,31 +1,33 @@
+# app/routers/products.py
 from fastapi import APIRouter, Response, Body, HTTPException, Path
 from typing import Sequence
+import csv, io, asyncio, html
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from .realtime import notify_inventory_changed
-from ..models import User
-from .reserves import _fetch_reserved_items, ADMIN_RE, _name_by_tgid
-from ..loaders import (RESERVED_IDS, searchable_fields, all_categories,
-                       parts_buckets, map_part_to_bucket
-                       )
-from ..schemas import Product
-import csv, io, asyncio
-from ..config import settings
-from ..exports import build_prices_xlsx
+from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 import aiohttp, httpx
-from fastapi import Body, HTTPException, Path
+
+from .realtime import notify_inventory_changed
+from .reserves import _fetch_reserved_items, ADMIN_RE, _name_by_tgid
+from ..models import User
 from ..security import validate_init_data, extract_tg_id
-from ..loaders import PRODUCTS, refresh_from_api, refresh_reserves
-from aiogram import Bot
-from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta
-import html
+from ..loaders import (
+    PRODUCTS, RESERVED_IDS, searchable_fields, all_categories,
+    parts_buckets, map_part_to_bucket, refresh_from_api, refresh_reserves
+)
+from ..exports import build_prices_xlsx
+from ..config import settings
+from ..schemas import Product
+
 
 router = APIRouter(prefix="/api")
 
 
 def _normalize_sort(s: str | None) -> str | None:
-    if not s: return None
+    if not s:
+        return None
     s = s.strip().lower()
     return s if s in {"price_asc", "price_desc", "brand", "model", "year"} else None
 
@@ -48,12 +50,14 @@ def _sort(items: list[Product], key: str | None):
 
 
 def _match(p: Product, q: str, fields: Sequence[str] | None):
-    if not q: return True
+    if not q:
+        return True
     hay = []
     raw = p.__dict__.get("_raw", {})
     if fields:
         for f in fields:
-            if f in raw: hay.append(str(raw.get(f, "")))
+            if f in raw:
+                hay.append(str(raw.get(f, "")))
     else:
         hay += [p.brand, p.model, p.part, p.year, raw.get("МАРКИРОВКА ДВИГАТЕЛЯ", ""), raw.get("ВХОДНОЙ АРТИКУЛ", "")]
     ql = q.lower()
@@ -62,7 +66,8 @@ def _match(p: Product, q: str, fields: Sequence[str] | None):
 
 def _short_label(s: str) -> str:
     s = " ".join(s.split())
-    if len(s) <= 16: return s
+    if len(s) <= 16:
+        return s
     parts = s.split()
     if len(parts) >= 2:
         cand = (parts[0] + " " + parts[1])[:16]
@@ -95,7 +100,7 @@ def products(q: str | None = None, sort: str | None = None,
              offset: int = 0, limit: int = 20,
              include_reserved: int | None = None):
     scope = [s.strip() for s in (fields or "").split(",") if s and s.strip()]
-    offset = max(0, offset);
+    offset = max(0, offset)
     limit = max(1, min(200, limit))
     show_reserved = bool(include_reserved)
 
@@ -111,19 +116,23 @@ def products(q: str | None = None, sort: str | None = None,
         return d
 
     def _cat_ok(p: Product):
-        if not cat: return True
+        if not cat:
+            return True
         return (p.__dict__.get("_raw", {}).get("КАТЕГОРИЯ") or "").strip() == cat
 
     def _bucket_ok(p: Product):
-        if not bucket: return True
+        if not bucket:
+            return True
         raw = p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ", "")
         key, _ = map_part_to_bucket(raw)
         return key == bucket
 
     def _part_ok(p: Product):
-        if not part: return True
+        if not part:
+            return True
         val = (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip()
-        if val == "Передняя часть (ноускат) в сборе": val = "Ноускат"
+        if val == "Передняя часть (ноускат) в сборе":
+            val = "Ноускат"
         return val == part
 
     items_all = [
@@ -144,23 +153,29 @@ def prices_csv(q: str | None = None, sort: str | None = None,
     scope = [s.strip() for s in (fields or "").split(",") if s and s.strip()]
 
     def _cat_ok(p: Product):
-        if not cat: return True
+        if not cat:
+            return True
         return (p.__dict__.get("_raw", {}).get("КАТЕГОРИЯ") or "").strip() == cat
 
     def _bucket_ok(p: Product):
-        if not bucket: return True
+        if not bucket:
+            return True
         raw = p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ", "")
         key, _ = map_part_to_bucket(raw)
         return key == bucket
 
     def _part_ok(p: Product):
-        if not part: return True
+        if not part:
+            return True
         val = (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip()
         if val == "Передняя часть (ноускат) в сборе":
             val = "Ноускат"
         return val == part
 
-    filt = [p for p in PRODUCTS if _cat_ok(p) and _bucket_ok(p) and _part_ok(p) and _match(p, q or "", scope or None)]
+    filt = [p for p in PRODUCTS
+            if _cat_ok(p) and _bucket_ok(p) and _part_ok(p)
+            and _match(p, q or "", scope or None)
+            and (p.id not in RESERVED_IDS)]
     items = _sort(filt, sort)
 
     buf = io.StringIO()
@@ -177,30 +192,38 @@ async def prices_xlsx(init_data: str = Body(..., embed=True), q: str | None = No
                       fields: str | None = None, sort: str | None = None,
                       cat: str | None = None, part: str | None = None, bucket: str | None = None):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
 
     scope = [s.strip() for s in (fields or "").split(",") if s and s.strip()]
 
     def _cat_ok(p: Product):
-        if not cat: return True
+        if not cat:
+            return True
         return (p.__dict__.get("_raw", {}).get("КАТЕГОРИЯ") or "").strip() == cat
 
     def _part_ok(p: Product):
-        if not part: return True
+        if not part:
+            return True
         val = (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip()
         if val == "Передняя часть (ноускат) в сборе":
             val = "Ноускат"
         return val == part
 
     def _bucket_ok(p: Product):
-        if not bucket: return True
+        if not bucket:
+            return True
         raw = p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ", "")
         key, _ = map_part_to_bucket(raw)
         return key == bucket
 
-    filt = [p for p in PRODUCTS if _cat_ok(p) and _bucket_ok(p) and _part_ok(p) and _match(p, q or "", scope or None)]
+    filt = [p for p in PRODUCTS
+            if _cat_ok(p) and _bucket_ok(p) and _part_ok(p)
+            and _match(p, q or "", scope or None)
+            and (p.id not in RESERVED_IDS)]
     items = _sort(filt, sort)
 
     buf = build_prices_xlsx(items)
@@ -224,27 +247,35 @@ async def prices_split(init_data: str = Body(..., embed=True),
                        bucket: str | None = None,
                        part: str | None = None):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
 
     scope = [s.strip() for s in (fields or "").split(",") if s and s.strip()]
 
     def _cat_ok(p: Product):
-        if not cat: return True
+        if not cat:
+            return True
         return (p.__dict__.get("_raw", {}).get("КАТЕГОРИЯ") or "").strip() == cat
 
     def _bucket_ok(p: Product):
-        if not bucket: return True
+        if not bucket:
+            return True
         raw = p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ", "")
         key, _ = map_part_to_bucket(raw)
         return key == bucket
 
     def _part_ok(p: Product):
-        if not part: return True
+        if not part:
+            return True
         return (p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ") or "").strip() == part
 
-    pool = [p for p in PRODUCTS if _cat_ok(p) and _bucket_ok(p) and _part_ok(p) and _match(p, q or "", scope or None)]
+    pool = [p for p in PRODUCTS
+            if _cat_ok(p) and _bucket_ok(p) and _part_ok(p)
+            and _match(p, q or "", scope or None)
+            and (p.id not in RESERVED_IDS)]
     ENGINES_RAW = "Двигатель"
     NOSECUT_RAW = "Передняя часть (ноускат) в сборе"
 
@@ -341,7 +372,6 @@ async def set_reserve(
     try:
         from sqlalchemy.orm import Session
         from ..db import SessionLocal
-        from ..models import User
         with SessionLocal() as s:  # type: ignore
             u = s.query(User).filter(User.tg_id == tg_id).first()
             is_admin = bool(u and u.is_admin) or (str(tg_id) == str(settings.admin_id))
@@ -353,10 +383,9 @@ async def set_reserve(
     if not is_admin:
         raise HTTPException(status_code=403, detail="forbidden")
 
-    # МСК без ZoneInfo: UTC+3 и +4 дня
-    from datetime import datetime, timedelta
-    msk_today = (datetime.utcnow() + timedelta(hours=3)).date()
-    reserve_date = (msk_today + timedelta(days=4)).isoformat()
+    # МСК +4 дня (дата без времени)
+    msk = ZoneInfo("Europe/Moscow")
+    reserve_date = (datetime.now(msk).date() + timedelta(days=4)).isoformat()
 
     p = _get_product(zap)
     if not p:
@@ -366,16 +395,19 @@ async def set_reserve(
     async with lock:
         payload_comment = f"[admin: {admin_name or f'id:{tg_id}'} ({tg_id})] {(comment or '').strip()}".strip()
 
-        url = f"{settings.api_base}/api/items.php?action=change_status"
+        url = f"{settings.inventory_api}?action=change_status"
         body = {
-            "user_id": settings.api_user_id,
+            "user_id": settings.inventory_user_id,
             "item_ids": [zap],
             "status": 2,
             "options": {"reserve_date": reserve_date, "comment": payload_comment}
         }
+        headers = {"Content-Type": "application/json"}
+        if settings.inventory_auth:
+            headers["Authorization"] = settings.inventory_auth
         try:
             async with httpx.AsyncClient(timeout=25) as cli:
-                resp = await cli.put(url, json=body)
+                resp = await cli.put(url, json=body, headers=headers)
                 if resp.status_code >= 400:
                     raise HTTPException(status_code=503, detail="no connection to inventory")
         except HTTPException:
@@ -392,7 +424,6 @@ async def set_reserve(
             changed = await refresh_reserves(force=True)
             if changed:
                 try:
-                    from .realtime import notify_inventory_changed
                     notify_inventory_changed()
                 except Exception:
                     pass
@@ -453,9 +484,11 @@ async def set_reserve(
 @router.post("/product/{pid}/send_photos")
 async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., embed=True)):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
 
     p = _get_product(pid)
     if not p or not p.photos:
@@ -465,18 +498,22 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
     caption = " ".join(filter(None, [
         f"{p.brand} {p.model}".strip(),
         f"• {p.part}".strip() if p.part else "",
-        f"• {(r.get('ШРОТ') or '').strip()} {(r.get('ВХОДНОЙ АРТИКУЛ') or '').strip()}".strip() if (
-                r.get('ШРОТ') or r.get('ВХОДНОЙ АРТИКУЛ')) else "",
+        f"• {(r.get('ШРОТ') or '').strip()} {(r.get('ВХОДНОЙ АРТИКУЛ') or '').strip()}".strip()
+        if (r.get('ШРОТ') or r.get('ВХОДНОЙ АРТИКУЛ')) else "",
         f"• {r.get('Склад', '').strip()}" if r.get('Склад') else ""
     ]))
 
     urls = []
     for u in p.photos:
-        if not u: continue
+        if not u:
+            continue
         u = u.strip()
-        if u.startswith("//"): u = "https:" + u
-        if u.startswith("http://"): u = "https://" + u[7:]
-        if not u.startswith("http"): continue
+        if u.startswith("//"):
+            u = "https:" + u
+        if u.startswith("http://"):
+            u = "https://" + u[7:]
+        if not u.startswith("http"):
+            continue
         urls.append(u)
     urls = urls[:20]
 
@@ -485,7 +522,8 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
     async def send_group(url_batch: list[str]) -> bool:
         from aiogram.types import InputMediaPhoto
         media = [InputMediaPhoto(media=u) for u in url_batch]
-        if media: media[0].caption = caption
+        if media:
+            media[0].caption = caption
         try:
             await bot.send_media_group(chat_id=int(tg_id), media=media)
             return True
@@ -500,7 +538,8 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
         try:
             async with aiohttp.ClientSession() as sess:
                 async with sess.get(url, timeout=timeout) as resp:
-                    if resp.status == 200: return await resp.read()
+                    if resp.status == 200:
+                        return await resp.read()
         except Exception as e:
             print("download failed:", url, e)
         return None
@@ -512,7 +551,8 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
         except Exception as e:
             print("send_photo URL error:", e)
         data = await download_bytes(url)
-        if not data: return
+        if not data:
+            return
         from aiogram.types import BufferedInputFile
         import os
         from urllib.parse import urlparse
@@ -541,16 +581,21 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
 @router.post("/reserve/remove")
 async def remove_reserve(init_data: str = Body(..., embed=True), zap: int = Body(..., embed=True)):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
     # тут же проверка администратора как в set_reserve
 
-    url = f"{settings.api_base}/api/items.php?action=change_status"
-    body = {"user_id": settings.api_user_id, "item_ids": [zap], "status": 0, "options": {}}
+    url = f"{settings.inventory_api}?action=change_status"
+    body = {"user_id": settings.inventory_user_id, "item_ids": [zap], "status": 0, "options": {}}
+    headers = {"Content-Type": "application/json"}
+    if settings.inventory_auth:
+        headers["Authorization"] = settings.inventory_auth
     try:
         async with httpx.AsyncClient(timeout=25) as cli:
-            r = await cli.put(url, json=body)
+            r = await cli.put(url, json=body, headers=headers)
             if r.status_code >= 400:
                 raise HTTPException(status_code=503, detail="no connection to inventory")
     except Exception:
@@ -560,7 +605,6 @@ async def remove_reserve(init_data: str = Body(..., embed=True), zap: int = Body
         await refresh_from_api(force=True)
         changed = await refresh_reserves(force=True)
         if changed:
-            from .realtime import notify_inventory_changed
             notify_inventory_changed()
     except Exception:
         pass
@@ -575,7 +619,6 @@ async def force_refresh():
         changed = await refresh_reserves(force=True)
         if changed:
             try:
-                from .realtime import notify_inventory_changed
                 notify_inventory_changed()
             except Exception:
                 pass
@@ -590,16 +633,17 @@ async def unset_reserve(
         zap: int = Body(..., embed=True),
 ):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
 
     # тот же чек админа, что и выше
     is_admin = False
     try:
         from sqlalchemy.orm import Session
         from ..db import SessionLocal
-        from ..models import User
         with SessionLocal() as s:  # type: ignore
             u = s.query(User).filter(User.tg_id == tg_id).first()
             is_admin = bool(u and u.is_admin) or (str(tg_id) == str(settings.admin_id))
@@ -638,7 +682,6 @@ async def unset_reserve(
         changed = await refresh_reserves(force=True)
         if changed:
             try:
-                from .realtime import notify_inventory_changed
                 notify_inventory_changed()
             except Exception:
                 pass
@@ -666,7 +709,8 @@ def reserves(q: str | None = None,
         return d
 
     def _bucket_ok(p: Product):
-        if not bucket: return True
+        if not bucket:
+            return True
         raw = p.__dict__.get("_raw", {}).get("ЗАПЧАСТЬ", "")
         key, _ = map_part_to_bucket(raw)
         return key == bucket
@@ -694,26 +738,34 @@ async def reserves_comment_edit(
         comment: str = Body("", embed=True),
 ):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id: raise HTTPException(status_code=401, detail="user missing")
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
 
     # — имя редактора из БД
     editor_name = _name_by_tgid(tg_id) or "Неизвестный"
     try:
+        from ..db import SessionLocal
         with SessionLocal() as s:  # type: ignore
             u = s.query(User).filter(User.tg_id == tg_id).first()
-            editor_name = (u.name or "").strip() if u else ""
+            editor_name = (u.name or "").strip() if u else editor_name
     except Exception:
         pass
 
-    # — текущий item (чтоб взять старый комментарий и дату резерва)
-    items = await _fetch_reserved_items()
-    cur = next((it for it in items if str(it.get("id")) == str(item_id)), None)
+    # — текущий item (для старого комментария и даты резерва)
+    cur = None
+    try:
+        items = await _fetch_reserved_items()
+        cur = next((it for it in items if str(it.get("id")) == str(item_id)), None)
+    except Exception:
+        cur = None
+
     old_full = (cur.get("comment") or "") if cur else ""
     old_user = ADMIN_RE.sub("", old_full, count=1).strip()
     reserve_date = (cur.get("reserve_date") or "").split(" ")[0] if cur else ""
-    if not reserve_date:  # страховочно, если пусто
+    if not reserve_date:
         msk = ZoneInfo("Europe/Moscow")
         reserve_date = (datetime.now(msk).date() + timedelta(days=4)).isoformat()
 
@@ -725,13 +777,14 @@ async def reserves_comment_edit(
     # — API: статус=2 (резерв), с прежней датой
     url = f"{settings.inventory_api}?action=change_status"
     payload = {
-        "user_id": settings.api_user_id,
+        "user_id": settings.inventory_user_id,
         "item_ids": [int(item_id)],
         "status": 2,
         "options": {"reserve_date": reserve_date, "comment": new_full},
     }
     headers = {"Content-Type": "application/json"}
-    if settings.inventory_auth: headers["Authorization"] = settings.inventory_auth
+    if settings.inventory_auth:
+        headers["Authorization"] = settings.inventory_auth
 
     try:
         async with httpx.AsyncClient(timeout=25) as cli:
@@ -767,7 +820,8 @@ async def reserves_comment_edit(
 
         def add(lbl, val):
             v = (val or "").strip()
-            if v: lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
+            if v:
+                lines.append(f"<b>{html.escape(lbl)}:</b> {html.escape(v)}")
 
         header = "✏️ <b>Изменение комментария резерва</b>"
         if p:
@@ -779,18 +833,20 @@ async def reserves_comment_edit(
             add("Топливо", r.get("ТОПЛИВО", ""))
             vol = (r.get("ОБЪЕМ", "") or "").strip()
             et = (r.get("ТИП ДВИГАТЕЛЯ", "") or "").strip()
-            if vol or et: add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et}")
+            if vol or et:
+                add("Двигатель", f"{vol}{(' ' if vol and et else '')}{et}")
             add("Коробка", r.get("КОРОБКА", ""))
             add("Кузов", r.get("ТИП КУЗОВА", ""))
-            if p.price or p.currency: add("Цена", f"{p.price or ''} {p.currency or ''}")
+            if p.price or p.currency:
+                add("Цена", f"{p.price or ''} {p.currency or ''}")
             add("На складе", r.get("Склад", ""))
             razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
-            if razb: add("Разборочный", razb)
+            if razb:
+                add("Разборочный", razb)
 
         lines.append(f"<b>До:</b> “{html.escape(old_user)}”")
         lines.append(f"<b>После:</b> “{html.escape(new_user)}”")
-        editor_line = editor_name or f"{editor_name}"
-        lines.append(f"<b>Редактировал:</b> {html.escape(editor_name)}")
+        lines.append(f"<b>Редактировал:</b> {html.escape(editor_name or f'id:{tg_id}')}")
 
         text = header + "\n" + "\n".join(lines)
         kwargs = {"chat_id": int(settings.notify_chat_id_reserve)}

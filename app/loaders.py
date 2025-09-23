@@ -129,7 +129,7 @@ def _row_to_product(item: dict) -> Product:
         "ПРИВОД": _f(item, "drive_id"),
         "VIN": _f(item, "vin_number"), "VRN": _f(item, "vrn_number"),
         "ОРИГИНАЛЬНЫЙ НОМЕР": _f(item, "oem_number"),
-        "ОПИСАНИЕ": ((item.get("comment") or _f(item, "description")) or "").strip(),
+        "ОПИСАНИЕ": (_f(item, "description") or "").strip(),
         "ВИДЕО": (item.get("video_url") or "").strip(),
         "ФОТО": "",  # не используется дальше
     }
