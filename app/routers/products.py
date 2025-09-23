@@ -15,6 +15,7 @@ from .reserves import (
     _send_tg as _resv_send_tg,
     _msg_reserve_cancel as _msg_reserve_cancel,
     _fetch_items_by_ids as _fetch_items_by_ids,
+    _unreserve_and_notify as _unreserve_and_notify,   # ← ДОБАВЬ ЭТО
 )
 
 from ..models import User
@@ -597,53 +598,16 @@ async def remove_reserve(
     reason: str = Body("", embed=True),
 ):
     ok = validate_init_data(init_data)
-    if not ok:
-        raise HTTPException(status_code=401, detail="invalid initData")
-    tg_id = extract_tg_id(ok.get("user"))
-    if not tg_id:
-        raise HTTPException(status_code=401, detail="user missing")
-
-    # карточка ДО смены статуса — чтобы собрать красивый текст
-    try:
-        items_for_tg = await _fetch_items_by_ids([int(zap)])
-    except Exception:
-        items_for_tg = []
-
-    # смена статуса на «склад»
-    url = f"{settings.inventory_api}?action=change_status"
-    body = {"user_id": settings.inventory_user_id, "item_ids": [int(zap)], "status": 0, "options": {}}
-    headers = {"Content-Type": "application/json"}
-    if settings.inventory_auth:
-        headers["Authorization"] = settings.inventory_auth
-    try:
-        async with httpx.AsyncClient(timeout=25) as cli:
-            r = await cli.put(url, json=body, headers=headers)
-            if r.status_code >= 400:
-                raise HTTPException(status_code=503, detail="no connection to inventory")
-    except Exception:
-        raise HTTPException(status_code=503, detail="no connection to inventory")
-
-    # уведомление в чат (с полным описанием и «Маркировка дв.»)
-    try:
-        if items_for_tg:
-            await _resv_send_tg(_msg_reserve_cancel(items_for_tg[0], admin_tag=None, reason=reason))
-        else:
-            txt = f"🔴 <b>Снят резерв</b> — ID {int(zap)}"
-            if (reason or "").strip():
-                txt += f"\n<b>Причина:</b> {html.escape(reason)}"
-            await _resv_send_tg(txt)
-    except Exception as e:
-        print("reserve remove notify error:", e)
-
-    # обновить кеш и дёрнуть live‑обновление
+    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
+    # одна общая реализация
+    await _unreserve_and_notify(int(zap), reason or "")
+    # обновление кешей (можно оставить как есть)
     try:
         await refresh_from_api(force=True)
-        changed = await refresh_reserves(force=True)
-        if changed:
+        if await refresh_reserves(force=True):
             notify_inventory_changed()
     except Exception:
         pass
-
     return {"ok": True}
 
 

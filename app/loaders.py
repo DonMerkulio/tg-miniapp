@@ -143,11 +143,9 @@ def _row_to_product(item: dict) -> Product:
         photos=photos, description=raw["ОПИСАНИЕ"], warehouse=raw["Склад"]
     )
     p.__dict__["_raw"] = raw
-
-    # ↓↓↓ добавьте это
-    p.__dict__["_stock_status"] = str(item.get("stock_status") or "0").strip()
-    p.__dict__["_deleted"] = str(item.get("deleted") or "0").strip()
-    p.__dict__["_quantity"] = quantity
+    # ↓↓↓ ЭТО ВАЖНО: статус и удалённость для фильтрации витрины
+    p.__dict__["_stock_status"] = str(item.get("stock_status") or "0")  # 0=активен, 2=резерв, 3=продан…
+    p.__dict__["_deleted"] = str(item.get("deleted") or "0")
     return p
 
 

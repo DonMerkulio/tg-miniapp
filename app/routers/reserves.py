@@ -182,6 +182,16 @@ def _fields(item: dict) -> dict:
         "vin": vin, "vrn": vrn,
     }
 
+async def _unreserve_and_notify(item_id: int, reason: str | None = "") -> None:
+    # карточку берём ДО смены статуса
+    items = await _fetch_items_by_ids([int(item_id)])
+    # снять резерв
+    await _change_status([int(item_id)], status=0, options={})
+    # уведомить TG
+    if items:
+        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason or ""))
+    notify_inventory_changed()
+
 
 
 async def _send_tg(text: str) -> None:
@@ -379,18 +389,10 @@ async def reserves_update_comment(item_id: int, data: dict = Body(...)):
 
 @router.delete("/reserves/{item_id}")
 async def reserves_delete(item_id: int, data: dict | None = Body(None)):
-    reason = (data or {}).get("reason") or ""
-    # берём карточку ДО смены статуса, чтобы красиво показать в TG
-    items = await _fetch_items_by_ids([item_id])
-
-    # снимаем резерв
-    await _change_status([item_id], status=0, options={})
-
-    # уведомляем чат
-    if items:
-        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason))
-
-    notify_inventory_changed()
+    # reason можно прилететь и в query у DELETE — подхватим на всякий
+    reason = (data or {}).get("reason") if isinstance(data, dict) else None
+    reason = reason or ""
+    await _unreserve_and_notify(item_id, reason)
     return {"ok": True}
 
 
