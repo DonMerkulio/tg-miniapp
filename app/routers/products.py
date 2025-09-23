@@ -602,12 +602,11 @@ async def remove_reserve(
     ok = validate_init_data(init_data)
     if not ok:
         raise HTTPException(status_code=401, detail="invalid initData")
-    tg_id = extract_tg_id(ok.get("user"))
+    tg_id = extract_tg_id(ok.get("user"))  # ← вот он
 
     # одна общая реализация + имя администратора
     await _unreserve_and_notify(int(zap), reason or "", actor_tg=tg_id)
 
-    # обновление кешей
     try:
         await refresh_from_api(force=True)
         if await refresh_reserves(force=True):
@@ -615,6 +614,7 @@ async def remove_reserve(
     except Exception:
         pass
     return {"ok": True}
+
 
 
 

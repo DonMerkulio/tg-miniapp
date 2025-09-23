@@ -287,35 +287,38 @@ async def _send_tg(text: str) -> None:
         await bot.session.close()
 
 
-async def _unreserve_and_notify(item_id: int, reason: str | None = "", actor_tg: str | int | None = None) -> None:
+async def _unreserve_and_notify(
+    item_id: int,
+    reason: str | None = "",
+    actor_tg: str | int | None = None,   # ← кто снял
+) -> None:
     # имя того, кто снял резерв
     admin_name = None
-    if actor_tg is not None:
-        try:
+    try:
+        if actor_tg is not None:
             admin_name = _name_by_tgid(actor_tg) or f"id:{actor_tg}"
-        except Exception:
-            admin_name = f"id:{actor_tg}"
+    except Exception:
+        admin_name = f"id:{actor_tg}" if actor_tg is not None else None
 
     # карточку берём ДО смены статуса
     items = await _fetch_items_by_ids([int(item_id)])
+
     # снять резерв
     await _change_status([int(item_id)], status=0, options={})
-    # уведомить TG
+
+    # уведомление
     if items:
         await _send_tg(_msg_reserve_cancel(items[0], admin_tag=admin_name, reason=reason or ""))
     else:
-        # fallback: витринный кеш
-        p = next((p for p in PRODUCTS if int(p.id) == int(item_id)), None)
-        if p:
-            await _send_tg(_msg_reserve_cancel_from_product(p, reason or "", admin_name))
-        else:
-            txt = f"🔴 <b>Снят резерв</b> — ID {int(item_id)}"
-            if (reason or "").strip():
-                txt += f"\n<b>Причина:</b> {html.escape(reason)}"
-            if admin_name:
-                txt += f"\n<b>Админ:</b> {html.escape(admin_name)}"
-            await _send_tg(txt)
+        txt = f"🔴 <b>Снят резерв</b> — ID {int(item_id)}"
+        if (reason or "").strip():
+            txt += f"\n<b>Причина:</b> {html.escape(reason)}"
+        if admin_name:
+            txt += f"\n<b>Админ:</b> {html.escape(admin_name)}"
+        await _send_tg(txt)
+
     notify_inventory_changed()
+
 
 
 def _photo_urls(item: dict) -> list[str]:
