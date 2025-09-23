@@ -600,10 +600,14 @@ async def remove_reserve(
     reason: str = Body("", embed=True),
 ):
     ok = validate_init_data(init_data)
-    if not ok: raise HTTPException(status_code=401, detail="invalid initData")
-    # единая реализация уведомления о снятии + причина
-    await _unreserve_and_notify(int(zap), reason or "")
-    # обновление кешей/веб‑вида
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid initData")
+    tg_id = extract_tg_id(ok.get("user"))
+
+    # одна общая реализация + имя администратора
+    await _unreserve_and_notify(int(zap), reason or "", actor_tg=tg_id)
+
+    # обновление кешей
     try:
         await refresh_from_api(force=True)
         if await refresh_reserves(force=True):
@@ -611,6 +615,7 @@ async def remove_reserve(
     except Exception:
         pass
     return {"ok": True}
+
 
 
 @router.post("/refresh")

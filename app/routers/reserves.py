@@ -238,7 +238,7 @@ def _msg_reserve_cancel(item: dict, admin_tag: str | None, reason: str | None) -
 
 
 # --- fallback: формирование сообщения из витринного Product ---
-def _msg_reserve_cancel_from_product(p, reason: str | None) -> str:
+def _msg_reserve_cancel_from_product(p, reason: str | None, admin_name: str | None = None) -> str:
     r = p.__dict__.get("_raw", {})
     title = f"{(p.brand or '').strip()} {(p.model or '').strip()}".strip()
     lines = []
@@ -259,11 +259,11 @@ def _msg_reserve_cancel_from_product(p, reason: str | None) -> str:
     add("Кузов", r.get("ТИП КУЗОВА", ""))
     if p.price or p.currency: add("Цена", f"{p.price or ''} {p.currency or ''}".strip())
     add("На складе", r.get("Склад", ""))
-    art = " ".join(x for x in [(r.get("ШРОТ") or "").strip(),
-                               (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
+    art = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
     add("Разборочный", art)
     add("Описание", r.get("ОПИСАНИЕ", ""))
     add("VIN", r.get("VIN", "")); add("VRN", r.get("VRN", ""))
+    if admin_name: add("Админ", admin_name)
     if reason: add("Причина", reason)
     return f"🔴 <b>Снят резерв</b> — {html.escape(title)}\n" + "\n".join(lines)
 
@@ -287,23 +287,33 @@ async def _send_tg(text: str) -> None:
         await bot.session.close()
 
 
-async def _unreserve_and_notify(item_id: int, reason: str | None = "") -> None:
+async def _unreserve_and_notify(item_id: int, reason: str | None = "", actor_tg: str | int | None = None) -> None:
+    # имя того, кто снял резерв
+    admin_name = None
+    if actor_tg is not None:
+        try:
+            admin_name = _name_by_tgid(actor_tg) or f"id:{actor_tg}"
+        except Exception:
+            admin_name = f"id:{actor_tg}"
+
     # карточку берём ДО смены статуса
     items = await _fetch_items_by_ids([int(item_id)])
     # снять резерв
     await _change_status([int(item_id)], status=0, options={})
     # уведомить TG
     if items:
-        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason or ""))
+        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=admin_name, reason=reason or ""))
     else:
-        # fallback: берём из витринного кеша и всё равно шлём полное описание
+        # fallback: витринный кеш
         p = next((p for p in PRODUCTS if int(p.id) == int(item_id)), None)
         if p:
-            await _send_tg(_msg_reserve_cancel_from_product(p, reason or ""))
+            await _send_tg(_msg_reserve_cancel_from_product(p, reason or "", admin_name))
         else:
             txt = f"🔴 <b>Снят резерв</b> — ID {int(item_id)}"
             if (reason or "").strip():
                 txt += f"\n<b>Причина:</b> {html.escape(reason)}"
+            if admin_name:
+                txt += f"\n<b>Админ:</b> {html.escape(admin_name)}"
             await _send_tg(txt)
     notify_inventory_changed()
 
