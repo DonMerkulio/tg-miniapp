@@ -6,39 +6,14 @@ from fastapi import APIRouter, Query, Body, HTTPException
 from aiogram import Bot
 from ..config import settings
 from .realtime import notify_inventory_changed
+from ..db import SessionLocal
+from ..models import User
 
 router = APIRouter(prefix="/api", tags=["reserves"])
 
 LIST_URL = f"{settings.api_base}/api/items.php?action=list&limit=10000&with_photo=1&filters[stock_status]=2"
-# наверху файла
 ADMIN_RE = re.compile(r"^\s*\[admin:\s*([^\(]+?)\s*\((\d+)\)\]\s*", re.IGNORECASE)
 MSK = timezone(timedelta(hours=3))
-
-from ..db import SessionLocal
-from ..models import User
-
-
-def _extract_articles(item: dict) -> tuple[str, str, str]:
-    """
-    Возвращает (shrot_letter, input_article, 'LETTER NNN').
-    Если полей нет — пытается вытащить из title (… ##Москва A 590).
-    """
-    f = item.get("fields") or {}
-    sh = ((f.get("shrot_id") or {}).get("display_value") or "").strip()
-    ia = ((f.get("input_article") or {}).get("value") or "").strip()
-
-    if not sh or not ia:
-        title = (item.get("title") or "").strip()
-        # ищем «##<склад> <буква> <номер>»
-        m = re.search(r"##\S+\s+([A-Za-zА-Яа-я])\s+(\d+)", title)
-        if m:
-            if not sh:
-                sh = m.group(1).upper()
-            if not ia:
-                ia = m.group(2)
-
-    art = " ".join(x for x in [sh, ia] if x).strip()
-    return sh, ia, art
 
 
 def _name_by_tgid(tg: str | int) -> str | None:
@@ -55,9 +30,12 @@ def _msk_plus_days_ymd(days: int = 4) -> str:
     return (datetime.now(MSK) + timedelta(days=days)).strftime("%Y-%m-%d")
 
 
+def _strip_admin_prefix(comment: str) -> str:
+    return ADMIN_RE.sub("", (comment or "").strip()).strip()
+
+
 def _with_admin_prefix(comment: str, admin_tag: str | None) -> str:
-    # убираем старый префикс и, если задан, добавляем нужный
-    body = ADMIN_RE.sub("", (comment or "").strip())
+    body = _strip_admin_prefix(comment)
     tag = (admin_tag or "").strip()
     return f"{tag} {body}".strip() if tag else body
 
@@ -85,30 +63,89 @@ async def _fetch_reserved_items() -> list[dict]:
         return (j or {}).get("data", {}).get("items", []) if isinstance(j, dict) else []
 
 
-def _msk_plus_days_ymd(days: int = 4) -> str:
-    return (datetime.now(MSK) + timedelta(days=days)).strftime("%Y-%m-%d")
+def _extract_articles(item: dict) -> tuple[str, str, str]:
+    """
+    Возвращает (shrot_letter, input_article, 'LETTER NNN').
+    Если полей нет — пытается вытащить из title (… ##<склад> <буква> <номер>).
+    """
+    f = item.get("fields") or {}
+    sh = ((f.get("shrot_id") or {}).get("display_value") or "").strip()
+    ia = ((f.get("input_article") or {}).get("value") or "").strip()
+    if not sh or not ia:
+        title = (item.get("title") or "").strip()
+        m = re.search(r"##\S+\s+([A-Za-zА-Яа-я])\s+(\d+)", title)
+        if m:
+            if not sh:
+                sh = m.group(1).upper()
+            if not ia:
+                ia = m.group(2)
+    art = " ".join(x for x in [sh, ia] if x).strip()
+    return sh, ia, art
 
 
-def _strip_admin_prefix(comment: str) -> str:
-    return ADMIN_RE.sub("", (comment or "").strip()).strip()
-
-
-def _with_admin_prefix(comment: str, admin_tag: str | None) -> str:
-    body = _strip_admin_prefix(comment)
-    tag = (admin_tag or "").strip()
-    return f"{tag} {body}".strip() if tag else body
-
-
+# УСТОЙЧИВАЯ загрузка карточек по id
 async def _fetch_items_by_ids(ids: list[int]) -> list[dict]:
-    url = f"{settings.api_base}/api/items.php"
-    params = [("action", "list"), ("with_photo", "0")]
-    for i in ids:
-        params.append(("ids[]", str(int(i))))
+    base = f"{settings.api_base}/api/items.php"
+
+    def only_requested(items: list[dict]) -> list[dict]:
+        want = {int(x) for x in ids}
+        out = []
+        for it in items or []:
+            try:
+                i = int(it.get("id", 0))
+            except Exception:
+                continue
+            if i in want:
+                out.append(it)
+        return out
+
+    # 1) ids[]
+    try:
+        params = [("action", "list"), ("with_photo", "0")]
+        for i in ids:
+            params.append(("ids[]", str(int(i))))
+        async with httpx.AsyncClient(timeout=25) as cli:
+            r = await cli.get(base, params=params)
+            r.raise_for_status()
+            j = r.json()
+            items = (j or {}).get("data", {}).get("items", []) if isinstance(j, dict) else []
+        sel = only_requested(items)
+        if len(sel) == len(ids):
+            return sel
+    except Exception:
+        pass
+
+    # 2) filters[id] для одиночного случая
+    if len(ids) == 1:
+        try:
+            params = [("action", "list"), ("with_photo", "0"), ("filters[id]", str(int(ids[0])))]
+            async with httpx.AsyncClient(timeout=25) as cli:
+                r = await cli.get(base, params=params)
+                r.raise_for_status()
+                j = r.json()
+                items = (j or {}).get("data", {}).get("items", []) if isinstance(j, dict) else []
+            sel = only_requested(items)
+            if sel:
+                return sel
+        except Exception:
+            pass
+
+    # 3) по одному запросу на id
+    out: list[dict] = []
     async with httpx.AsyncClient(timeout=25) as cli:
-        r = await cli.get(url, params=params)
-        r.raise_for_status()
-        j = r.json()
-        return (j or {}).get("data", {}).get("items", []) if isinstance(j, dict) else []
+        for i in ids:
+            try:
+                params = [("action", "list"), ("with_photo", "0"), ("filters[id]", str(int(i)))]
+                r = await cli.get(base, params=params)
+                r.raise_for_status()
+                j = r.json()
+                items = (j or {}).get("data", {}).get("items", []) if isinstance(j, dict) else []
+                sel = only_requested(items)
+                if sel:
+                    out.extend(sel)
+            except Exception:
+                continue
+    return out
 
 
 def _fields(item: dict) -> dict:
@@ -116,11 +153,15 @@ def _fields(item: dict) -> dict:
     g = lambda key, sub="display_value": (f.get(key, {}) or {}).get(sub) or ""
     v = lambda key: (f.get(key, {}) or {}).get("value") or ""
 
-    brand = g("car_brand_id"); model = g("car_model_id"); part = g("part_id")
-    year = v("year"); capacity = g("capacity_id"); fuel = g("type_id")
-    engine_mark = v("mark_engine"); warehouse = g("stock_id")
+    brand = g("car_brand_id")
+    model = g("car_model_id")
+    part = g("part_id")
+    year = v("year")
+    capacity = g("capacity_id")
+    fuel = g("type_id")
+    engine_mark = v("mark_engine")
+    warehouse = g("stock_id")
 
-    # ↓↓↓ было: shrot = g("shrot_id"); input_article = v("input_article"); articles = " ".join(...)
     shrot, input_article, articles = _extract_articles(item)
 
     return dict(
@@ -128,7 +169,6 @@ def _fields(item: dict) -> dict:
         capacity=capacity, fuel=fuel, engine_mark=engine_mark,
         warehouse=warehouse, articles=articles
     )
-
 
 
 async def _send_tg(text: str) -> None:
@@ -144,21 +184,6 @@ async def _send_tg(text: str) -> None:
         await bot.session.close()
 
 
-async def _change_status(item_ids: list[int], status: int, options: dict | None = None) -> dict:
-    url = f"{settings.api_base}/api/items.php?action=change_status"
-    payload = {
-        "user_id": settings.api_user_id,
-        "item_ids": [int(x) for x in item_ids],
-        "status": int(status),
-        "options": options or {}
-    }
-    async with httpx.AsyncClient(timeout=25) as cli:
-        r = await cli.put(url, json=payload)
-        if r.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"inventory: {r.text}")
-        return r.json()
-
-
 def _msg_reserve_set(item: dict, reserve_date: str, admin_tag: str | None, comment: str) -> str:
     f = _fields(item)
     title = f"{(f['brand'] or '').strip()} {(f['model'] or '').strip()}".strip()
@@ -170,7 +195,8 @@ def _msg_reserve_set(item: dict, reserve_date: str, admin_tag: str | None, comme
 
     add("Запчасть", f["part"])
     add("Год", f["year"])
-    if f["capacity"] or f["fuel"]: add("Двигатель", f"{f['capacity']} {f['fuel']}".strip())
+    if f["capacity"] or f["fuel"]:
+        add("Двигатель", f"{f['capacity']} {f['fuel']}".strip())
     add("Маркировка дв.", f["engine_mark"])
     add("На складе", f["warehouse"])
     add("Разборочный", f["articles"])
@@ -251,12 +277,8 @@ def _card(item: dict) -> dict:
         "warehouse": warehouse,
         "photos": _photo_urls(item),
         "reserve_till": till,
-
-        # отдаем «чистый» комментарий
         "comment": user_comment,
         "user_comment": user_comment,
-
-        # данные об админе отдельно
         "admin_name": admin_name,
         "admin_tg_id": admin_tg,
         "admin_tag": f"[admin: {admin_name} ({admin_tg})]" if admin_tg else "",
@@ -273,7 +295,7 @@ async def reserves_admins():
         if c["admin_tg_id"]:
             shown_name = c["admin_name"] or _name_by_tgid(c["admin_tg_id"]) or f"id:{c['admin_tg_id']}"
             g = groups.setdefault(c["admin_tg_id"], {"tg_id": c["admin_tg_id"], "name": shown_name, "count": 0})
-            g["name"] = shown_name  # на случай если впервые был плейсхолдер
+            g["name"] = shown_name
             g["count"] += 1
         else:
             unknown += 1
@@ -301,11 +323,9 @@ async def reserves_list(admin: str | None = Query(None, description="tg_id ад�
 async def reserves_list_compat(admin: str | None = None,
                                unknown: int | None = None,
                                tag: str | None = None):
-    # старые фронтовые параметры
     if unknown:
         admin = "_"
     if tag and not admin:
-        # tag может быть вида: "[admin: Имя (565032824)]"
         m = ADMIN_RE.search(tag)
         if m:
             admin = m.group(2)  # tg_id
@@ -314,16 +334,13 @@ async def reserves_list_compat(admin: str | None = None,
 
 @router.patch("/reserves/{item_id}/comment")
 async def reserves_update_comment(item_id: int, data: dict = Body(...)):
-    # приходят: comment, admin_tag (init_data игнорим)
     admin_tag = data.get("admin_tag") or ""
     comment_body = data.get("comment") or ""
     reserve_date = (data.get("reserve_date") or _msk_plus_days_ymd())
-    # 1) смена статуса
     await _change_status([item_id], status=2, options={
         "reserve_date": reserve_date,
         "comment": _with_admin_prefix(comment_body, admin_tag),
     })
-    # 2) загрузим карточку и уведомим TG
     items = await _fetch_items_by_ids([item_id])
     if items:
         await _send_tg(_msg_reserve_set(items[0], reserve_date, admin_tag, comment_body))
@@ -334,11 +351,8 @@ async def reserves_update_comment(item_id: int, data: dict = Body(...)):
 @router.delete("/reserves/{item_id}")
 async def reserves_delete(item_id: int, data: dict | None = Body(None)):
     reason = (data or {}).get("reason") or ""
-    # возьмем данные ДО изменения статуса, чтобы красиво сообщить
-    items = await _fetch_items_by_ids([item_id])
-    # 1) вернуть на склад
+    items = await _fetch_items_by_ids([item_id])  # до изменения, чтобы в тексте были данные резерва
     await _change_status([item_id], status=0, options={})
-    # 2) уведомление TG
     if items:
         await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason))
     notify_inventory_changed()
