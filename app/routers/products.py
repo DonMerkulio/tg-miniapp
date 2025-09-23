@@ -10,7 +10,13 @@ from aiogram.exceptions import TelegramBadRequest
 import aiohttp, httpx
 
 from .realtime import notify_inventory_changed
-from .reserves import _fetch_reserved_items, ADMIN_RE, _name_by_tgid
+from .reserves import (
+    _fetch_reserved_items, ADMIN_RE, _name_by_tgid,
+    _send_tg as _resv_send_tg,
+    _msg_reserve_cancel as _msg_reserve_cancel,
+    _fetch_items_by_ids as _fetch_items_by_ids,
+)
+
 from ..models import User
 from ..security import validate_init_data, extract_tg_id
 from ..loaders import (
@@ -585,17 +591,27 @@ async def product_send_photos(pid: int = Path(...), init_data: str = Body(..., e
 
 
 @router.post("/reserve/remove")
-async def remove_reserve(init_data: str = Body(..., embed=True), zap: int = Body(..., embed=True)):
+async def remove_reserve(
+    init_data: str = Body(..., embed=True),
+    zap: int = Body(..., embed=True),
+    reason: str = Body("", embed=True),
+):
     ok = validate_init_data(init_data)
     if not ok:
         raise HTTPException(status_code=401, detail="invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
     if not tg_id:
         raise HTTPException(status_code=401, detail="user missing")
-    # тут же проверка администратора как в set_reserve
 
+    # карточка ДО смены статуса — чтобы собрать красивый текст
+    try:
+        items_for_tg = await _fetch_items_by_ids([int(zap)])
+    except Exception:
+        items_for_tg = []
+
+    # смена статуса на «склад»
     url = f"{settings.inventory_api}?action=change_status"
-    body = {"user_id": settings.inventory_user_id, "item_ids": [zap], "status": 0, "options": {}}
+    body = {"user_id": settings.inventory_user_id, "item_ids": [int(zap)], "status": 0, "options": {}}
     headers = {"Content-Type": "application/json"}
     if settings.inventory_auth:
         headers["Authorization"] = settings.inventory_auth
@@ -607,6 +623,19 @@ async def remove_reserve(init_data: str = Body(..., embed=True), zap: int = Body
     except Exception:
         raise HTTPException(status_code=503, detail="no connection to inventory")
 
+    # уведомление в чат (с полным описанием и «Маркировка дв.»)
+    try:
+        if items_for_tg:
+            await _resv_send_tg(_msg_reserve_cancel(items_for_tg[0], admin_tag=None, reason=reason))
+        else:
+            txt = f"🔴 <b>Снят резерв</b> — ID {int(zap)}"
+            if (reason or "").strip():
+                txt += f"\n<b>Причина:</b> {html.escape(reason)}"
+            await _resv_send_tg(txt)
+    except Exception as e:
+        print("reserve remove notify error:", e)
+
+    # обновить кеш и дёрнуть live‑обновление
     try:
         await refresh_from_api(force=True)
         changed = await refresh_reserves(force=True)
@@ -614,7 +643,9 @@ async def remove_reserve(init_data: str = Body(..., embed=True), zap: int = Body
             notify_inventory_changed()
     except Exception:
         pass
+
     return {"ok": True}
+
 
 
 @router.post("/refresh")
