@@ -8,6 +8,7 @@ from ..config import settings
 from .realtime import notify_inventory_changed
 from ..db import SessionLocal
 from ..models import User
+from ..security import validate_init_data, extract_tg_id
 
 router = APIRouter(prefix="/api", tags=["reserves"])
 
@@ -174,12 +175,19 @@ def _fields(item: dict) -> dict:
 async def _send_tg(text: str) -> None:
     bot = Bot(settings.bot_token)
     try:
-        kwargs = dict(chat_id=settings.notify_chat_id_reserve,
-                      text=text, parse_mode="HTML",
-                      disable_web_page_preview=True)
-        if settings.notify_thread_id_reserve:
-            kwargs["message_thread_id"] = int(settings.notify_thread_id_reserve)
+        kwargs = {
+            "chat_id": int(settings.notify_chat_id_reserve),
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        tid = getattr(settings, "notify_thread_id_reserve", 0)
+        if tid and int(tid) > 0:
+            kwargs["message_thread_id"] = int(tid)
         await bot.send_message(**kwargs)
+    except Exception as e:
+        # чтобы видеть причину, если Telegram отвергает сообщение
+        print("reserve notify error:", e, flush=True)
     finally:
         await bot.session.close()
 
@@ -351,9 +359,24 @@ async def reserves_update_comment(item_id: int, data: dict = Body(...)):
 @router.delete("/reserves/{item_id}")
 async def reserves_delete(item_id: int, data: dict | None = Body(None)):
     reason = (data or {}).get("reason") or ""
-    items = await _fetch_items_by_ids([item_id])  # до изменения, чтобы в тексте были данные резерва
+    init_data = (data or {}).get("init_data") or ""
+
+    ok = validate_init_data(init_data)
+    tg_id = extract_tg_id(ok.get("user")) if ok else None
+    admin_tag = None
+    if tg_id:
+        name = _name_by_tgid(tg_id) or ""
+        admin_tag = f"[admin: {name or f'id:{tg_id}'} ({tg_id})]"
+
+    # берём карточку ДО смены статуса, чтобы в нотификации были все поля
+    items = await _fetch_items_by_ids([item_id])
+
+    # вернуть на склад
     await _change_status([item_id], status=0, options={})
+
+    # уведомление в чат
     if items:
-        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=None, reason=reason))
+        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=admin_tag, reason=reason))
+
     notify_inventory_changed()
     return {"ok": True}
