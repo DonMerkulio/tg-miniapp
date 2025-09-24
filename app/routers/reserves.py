@@ -290,9 +290,9 @@ async def _send_tg(text: str) -> None:
 async def _unreserve_and_notify(
     item_id: int,
     reason: str | None = "",
-    actor_tg: str | int | None = None,   # кто снял резерв
+    actor_tg: str | int | None = None,   # ← кто снял резерв
 ) -> None:
-    # имя снимающего из БД
+    # имя снимающего из БД (или id:12345, если имени нет)
     admin_name = None
     try:
         if actor_tg is not None:
@@ -306,9 +306,9 @@ async def _unreserve_and_notify(
     # снять резерв
     await _change_status([int(item_id)], status=0, options={})
 
-    # уведомление в чат
+    # уведомление в чат (передаём admin_name)
     if items:
-        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=admin_name, reason=reason or ""))
+        await _send_tg(_msg_reserve_cancel(items[0], admin_tag=admin_name, reason=(reason or "")))
     else:
         txt = f"🔴 <b>Снят резерв</b> — ID {int(item_id)}"
         if (reason or "").strip():
@@ -318,6 +318,8 @@ async def _unreserve_and_notify(
         await _send_tg(txt)
 
     notify_inventory_changed()
+
+
 
 
 

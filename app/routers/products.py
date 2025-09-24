@@ -606,7 +606,7 @@ async def remove_reserve(
     if not tg_id:
         raise HTTPException(status_code=401, detail="user missing")
 
-    # одна общая реализация + пробрасываем, кто снял
+    # единый метод + указываем, кто снял
     await _unreserve_and_notify(int(zap), reason or "", actor_tg=tg_id)
 
     # обновление кешей
@@ -618,6 +618,8 @@ async def remove_reserve(
         pass
 
     return {"ok": True}
+
+
 
 
 
