@@ -602,18 +602,23 @@ async def remove_reserve(
     ok = validate_init_data(init_data)
     if not ok:
         raise HTTPException(status_code=401, detail="invalid initData")
-    tg_id = extract_tg_id(ok.get("user"))  # ← вот он
+    tg_id = extract_tg_id(ok.get("user"))
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="user missing")
 
-    # одна общая реализация + имя администратора
+    # одна общая реализация + пробрасываем, кто снял
     await _unreserve_and_notify(int(zap), reason or "", actor_tg=tg_id)
 
+    # обновление кешей
     try:
         await refresh_from_api(force=True)
         if await refresh_reserves(force=True):
             notify_inventory_changed()
     except Exception:
         pass
+
     return {"ok": True}
+
 
 
 

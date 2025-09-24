@@ -290,9 +290,9 @@ async def _send_tg(text: str) -> None:
 async def _unreserve_and_notify(
     item_id: int,
     reason: str | None = "",
-    actor_tg: str | int | None = None,   # ← кто снял
+    actor_tg: str | int | None = None,   # кто снял резерв
 ) -> None:
-    # имя того, кто снял резерв
+    # имя снимающего из БД
     admin_name = None
     try:
         if actor_tg is not None:
@@ -300,13 +300,13 @@ async def _unreserve_and_notify(
     except Exception:
         admin_name = f"id:{actor_tg}" if actor_tg is not None else None
 
-    # карточку берём ДО смены статуса
+    # карточка ДО смены статуса
     items = await _fetch_items_by_ids([int(item_id)])
 
     # снять резерв
     await _change_status([int(item_id)], status=0, options={})
 
-    # уведомление
+    # уведомление в чат
     if items:
         await _send_tg(_msg_reserve_cancel(items[0], admin_tag=admin_name, reason=reason or ""))
     else:
@@ -318,6 +318,7 @@ async def _unreserve_and_notify(
         await _send_tg(txt)
 
     notify_inventory_changed()
+
 
 
 
