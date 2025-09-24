@@ -15,7 +15,7 @@ from .reserves import (
     _send_tg as _resv_send_tg,
     _msg_reserve_cancel as _msg_reserve_cancel,
     _fetch_items_by_ids as _fetch_items_by_ids,
-    _unreserve_and_notify as _unreserve_and_notify,   # используется для снятия + уведомления
+    _unreserve_and_notify as _unreserve_and_notify,
 )
 
 from ..models import User
@@ -395,7 +395,6 @@ async def set_reserve(
     if not is_admin:
         raise HTTPException(status_code=403, detail="forbidden")
 
-    # МСК +4 дня (дата без времени)
     msk = ZoneInfo("Europe/Moscow")
     reserve_date = (datetime.now(msk).date() + timedelta(days=4)).isoformat()
 
@@ -427,7 +426,6 @@ async def set_reserve(
         except Exception:
             raise HTTPException(status_code=503, detail="no connection to inventory")
 
-        # форс‑обновления и live‑нотификация
         try:
             await refresh_from_api(force=True)
         except Exception as e:
@@ -442,7 +440,6 @@ async def set_reserve(
         except Exception as e:
             print("refresh_reserves after reserve error:", e)
 
-        # уведомление в группу
         try:
             bot = Bot(settings.bot_token)
             r = p.__dict__.get("_raw", {})
@@ -471,8 +468,6 @@ async def set_reserve(
             razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
             if razb:
                 add("Разборочный", razb)
-            # Описание (из Product.description или RAW)
-            add("Описание", (p.description or r.get("ОПИСАНИЕ", "")))
             add("VIN", r.get("VIN", ""))
             add("VRN", r.get("VRN", ""))
             add("Резерв до", reserve_date)
@@ -606,29 +601,21 @@ async def remove_reserve(
     if not tg_id:
         raise HTTPException(status_code=401, detail="user missing")
 
-    # единый метод + указываем, кто снял
+    # единый метод + передаём, кто снял резерв
     await _unreserve_and_notify(int(zap), reason or "", actor_tg=tg_id)
 
-    # обновление кешей
     try:
         await refresh_from_api(force=True)
         if await refresh_reserves(force=True):
             notify_inventory_changed()
     except Exception:
         pass
-
     return {"ok": True}
-
-
-
-
-
 
 
 @router.post("/refresh")
 async def force_refresh():
     await refresh_from_api(force=True)
-    # сразу обновим кеш резервов и, если изменилось, дёрнем live‑обновление
     try:
         changed = await refresh_reserves(force=True)
         if changed:
@@ -653,7 +640,6 @@ async def unset_reserve(
     if not tg_id:
         raise HTTPException(status_code=401, detail="user missing")
 
-    # тот же чек админа, что и выше
     is_admin = False
     try:
         from sqlalchemy.orm import Session
@@ -670,7 +656,7 @@ async def unset_reserve(
     payload = {
         "user_id": settings.inventory_user_id,
         "item_ids": [int(zap)],
-        "status": 0,  # вернуть на склад
+        "status": 0,
         "options": {}
     }
     headers = {"Content-Type": "application/json"}
@@ -687,7 +673,6 @@ async def unset_reserve(
     except Exception:
         raise HTTPException(status_code=503, detail="no connection to inventory")
 
-    # обновляем данные/резервы и дергаем SSE
     try:
         await refresh_from_api(force=True)
     except Exception as e:
@@ -710,7 +695,6 @@ def reserves(q: str | None = None,
              sort: str | None = None,
              bucket: str | None = None,
              offset: int = 0, limit: int = 20):
-    # те же вспомогательные, что в /products
     def _card(p: Product):
         d = p.model_dump()
         r = p.__dict__.get("_raw", {})
@@ -729,7 +713,7 @@ def reserves(q: str | None = None,
         key, _ = map_part_to_bucket(raw)
         return key == bucket
 
-    scope = None  # поиск по умолчанию по основным полям
+    scope = None
     pool = [p for p in PRODUCTS
             if (p.id in RESERVED_IDS) and _bucket_ok(p) and _match(p, q or "", scope)]
     pool = _sort(pool, sort)
@@ -758,7 +742,6 @@ async def reserves_comment_edit(
     if not tg_id:
         raise HTTPException(status_code=401, detail="user missing")
 
-    # — имя редактора из БД
     editor_name = _name_by_tgid(tg_id) or "Неизвестный"
     try:
         from ..db import SessionLocal
@@ -768,7 +751,6 @@ async def reserves_comment_edit(
     except Exception:
         pass
 
-    # — текущий item (для старого комментария и даты резерва)
     cur = None
     try:
         items = await _fetch_reserved_items()
@@ -783,12 +765,10 @@ async def reserves_comment_edit(
         msk = ZoneInfo("Europe/Moscow")
         reserve_date = (datetime.now(msk).date() + timedelta(days=4)).isoformat()
 
-    # — новый полный комментарий с админ‑префиксом
     admin_prefix = f"[admin: {editor_name or f'id:{tg_id}'} ({tg_id})]"
     new_user = (comment or "").strip()
     new_full = f"{admin_prefix} {new_user}".strip()
 
-    # — API: статус=2 (резерв), с прежней датой
     url = f"{settings.inventory_api}?action=change_status"
     payload = {
         "user_id": settings.inventory_user_id,
@@ -810,7 +790,6 @@ async def reserves_comment_edit(
     except Exception:
         raise HTTPException(status_code=503, detail="no connection to inventory")
 
-    # — рефреш и нотификация каталога
     try:
         await refresh_from_api(force=True)
     except Exception:
@@ -825,7 +804,6 @@ async def reserves_comment_edit(
     except Exception:
         pass
 
-    # — TG уведомление
     try:
         bot = Bot(settings.bot_token)
         p = next((p for p in PRODUCTS if int(p.id) == int(item_id)), None)
@@ -858,8 +836,6 @@ async def reserves_comment_edit(
             razb = " ".join(x for x in [(r.get("ШРОТ") or "").strip(), (r.get("ВХОДНОЙ АРТИКУЛ") or "").strip()] if x)
             if razb:
                 add("Разборочный", razb)
-            # Описание
-            add("Описание", (p.description or r.get("ОПИСАНИЕ", "")))
 
         lines.append(f"<b>До:</b> “{html.escape(old_user)}”")
         lines.append(f"<b>После:</b> “{html.escape(new_user)}”")
