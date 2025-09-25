@@ -1,6 +1,7 @@
+# app/routers/broadcast_notify.py
 from __future__ import annotations
 import asyncio, time, uuid
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
@@ -16,11 +17,17 @@ from ..config import settings
 
 router = APIRouter(prefix="/api/broadcast/notify", tags=["broadcast-notify"])
 
+MAX_PHOTOS = 10
+MAX_VIDEOS = 5
+MAX_DOCS = 5
+
+
 # -------- helpers --------
 def _check_admin(tg_id: str, db: Session):
     u = db.query(User).filter(User.tg_id == tg_id).first()
     if not u or not (u.is_admin or str(tg_id) == str(settings.admin_id)):
         raise HTTPException(status_code=403, detail="forbidden")
+
 
 def _pick_recipients(db: Session) -> List[User]:
     return (
@@ -29,6 +36,7 @@ def _pick_recipients(db: Session) -> List[User]:
         .order_by(User.created_at.asc())
         .all()
     )
+
 
 def _reason_from_exc(e: Exception) -> str:
     s = (str(e) or "").lower()
@@ -42,65 +50,112 @@ def _reason_from_exc(e: Exception) -> str:
         return "слишком много запросов (лимит Telegram)"
     return str(e) or "ошибка доставки"
 
+
+async def _send_photos(bot: Bot, chat_id: int, photos: List[Tuple[str, bytes]]) -> None:
+    if not photos:
+        return
+    chunks = [photos[i:i + MAX_PHOTOS] for i in range(0, len(photos), MAX_PHOTOS)]
+    for chunk in chunks:
+        if len(chunk) == 1:
+            name, data = chunk[0]
+            await bot.send_photo(chat_id, BufferedInputFile(data, filename=name))
+        else:
+            media = [InputMediaPhoto(media=BufferedInputFile(d, filename=n)) for n, d in chunk]
+            try:
+                await bot.send_media_group(chat_id, media)
+            except Exception:
+                # fallback — по одному
+                for name, data in chunk:
+                    try:
+                        await bot.send_photo(chat_id, BufferedInputFile(data, filename=name))
+                    except Exception:
+                        pass
+        await asyncio.sleep(0.15)
+
+
+async def _send_videos(bot: Bot, chat_id: int, videos: List[Tuple[str, bytes]]) -> None:
+    if not videos:
+        return
+    chunks = [videos[i:i + MAX_VIDEOS] for i in range(0, len(videos), MAX_VIDEOS)]
+    for chunk in chunks:
+        if len(chunk) == 1:
+            name, data = chunk[0]
+            await bot.send_video(chat_id, BufferedInputFile(data, filename=name))
+        else:
+            media = [InputMediaVideo(media=BufferedInputFile(d, filename=n)) for n, d in chunk]
+            try:
+                await bot.send_media_group(chat_id, media)
+            except Exception:
+                # fallback — по одному
+                for name, data in chunk:
+                    try:
+                        await bot.send_video(chat_id, BufferedInputFile(data, filename=name))
+                    except Exception:
+                        pass
+        await asyncio.sleep(0.2)
+
+
+async def _send_docs(bot: Bot, chat_id: int, docs: List[Tuple[str, bytes]]) -> None:
+    for name, data in docs[:MAX_DOCS]:
+        try:
+            await bot.send_document(chat_id, BufferedInputFile(data, filename=name))
+        except Exception:
+            pass
+        await asyncio.sleep(0.1)
+
+
 # -------- state --------
 JOBS: Dict[str, Dict[str, Any]] = {}
+
 
 # -------- preview --------
 @router.post("/preview")
 async def preview(
-    init_data: str = Form(...),
-    text: str = Form(""),
-    photos: List[UploadFile] = File(default=[]),
-    files:  List[UploadFile] = File(default=[]),
-    db: Session = Depends(get_db),
+        init_data: str = Form(...),
+        text: str = Form(""),
+        photos: List[UploadFile] = File(default=[]),
+        files: List[UploadFile] = File(default=[]),
+        db: Session = Depends(get_db),
 ):
     ok = validate_init_data(init_data)
     if not ok: raise HTTPException(401, "invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
     _check_admin(tg_id, db)
 
-    # прочитать вложения
-    album_bytes: List[tuple[str, bytes, str]] = []  # (name, data, kind: 'photo'|'video')
-    docs_bytes:  List[tuple[str, bytes]] = []       # (name, data)
+    # разобрать вложения
+    photos_bytes: List[Tuple[str, bytes]] = []
+    videos_bytes: List[Tuple[str, bytes]] = []
+    docs_bytes: List[Tuple[str, bytes]] = []
 
     # фото (только image/*)
-    for f in photos[:10]:
-        if not (f.content_type or "").startswith("image/"): continue
-        album_bytes.append((f.filename or "photo.jpg", await f.read(), "photo"))
+    for f in photos[:MAX_PHOTOS]:
+        if (f.content_type or "").startswith("image/"):
+            photos_bytes.append((f.filename or "photo.jpg", await f.read()))
 
-    # файлы/видео (до 5)
-    for f in files[:5]:
+    # файлы: видео в отдельный список, остальные — документы
+    for f in files[:MAX_VIDEOS + MAX_DOCS]:
         ct = f.content_type or ""
         data = await f.read()
-        if ct.startswith("video/"):
-            # видео можно в альбом
-            if len(album_bytes) < 10:
-                album_bytes.append((f.filename or "video.mp4", data, "video"))
-        else:
+        if ct.startswith("video/") and len(videos_bytes) < MAX_VIDEOS:
+            videos_bytes.append((f.filename or "video.mp4", data))
+        elif not ct.startswith("video/") and len(docs_bytes) < MAX_DOCS:
             docs_bytes.append((f.filename or "file.bin", data))
 
-    # отправка
     bot = Bot(settings.bot_token)
     try:
         if (text or "").strip():
             await bot.send_message(int(tg_id), text, parse_mode="HTML", disable_web_page_preview=True)
-        # альбом (фото/видео)
-        if album_bytes:
-            media = []
-            for name, data, kind in album_bytes[:10]:
-                if kind == "video":
-                    media.append(InputMediaVideo(media=BufferedInputFile(data, filename=name)))
-                else:
-                    media.append(InputMediaPhoto(media=BufferedInputFile(data, filename=name)))
-            await bot.send_media_group(int(tg_id), media)
-        # документы
-        for name, data in docs_bytes[:5]:
-            await bot.send_document(int(tg_id), BufferedInputFile(data, filename=name))
+        await _send_photos(bot, int(tg_id), photos_bytes)
+        await _send_videos(bot, int(tg_id), videos_bytes)
+        await _send_docs(bot, int(tg_id), docs_bytes)
     finally:
-        try: await bot.session.close()
-        except: pass
+        try:
+            await bot.session.close()
+        except:
+            pass
 
     return {"ok": True}
+
 
 # -------- start --------
 @router.get("/recipients")
@@ -112,14 +167,15 @@ def recipients(init_data: str = Query(...), db: Session = Depends(get_db)):
     recips = _pick_recipients(db)
     return {"count": len(recips)}
 
+
 @router.post("/start")
 def start(
-    background_tasks: BackgroundTasks,
-    init_data: str = Form(...),
-    text: str = Form(""),
-    photos: List[UploadFile] = File(default=[]),
-    files:  List[UploadFile] = File(default=[]),
-    db: Session = Depends(get_db),
+        background_tasks: BackgroundTasks,
+        init_data: str = Form(...),
+        text: str = Form(""),
+        photos: List[UploadFile] = File(default=[]),
+        files: List[UploadFile] = File(default=[]),
+        db: Session = Depends(get_db),
 ):
     ok = validate_init_data(init_data)
     if not ok: raise HTTPException(401, "invalid initData")
@@ -130,29 +186,27 @@ def start(
     recips = _pick_recipients(db)
     user_ids = [int(u.tg_id) for u in recips if str(u.tg_id).isdigit()]
 
-    # прочитать вложения в память один раз
-    album: List[tuple[str, bytes, str]] = []  # (name, data, 'photo'|'video'), макс 10
-    docs:  List[tuple[str, bytes]] = []       # (name, data), макс 5
+    # вложения в память
+    photos_buf: List[Tuple[str, bytes]] = []
+    videos_buf: List[Tuple[str, bytes]] = []
+    docs_buf: List[Tuple[str, bytes]] = []
 
-    # фото (image/*)
-    for f in photos[:10]:
-        if not (f.content_type or "").startswith("image/"): continue
-        album.append((f.filename or "photo.jpg", f.file.read(), "photo"))
+    for f in photos[:MAX_PHOTOS]:
+        if (f.content_type or "").startswith("image/"):
+            photos_buf.append((f.filename or "photo.jpg", f.file.read()))
 
-    # файлы/видео (до 5)
-    for f in files[:5]:
+    for f in files[:MAX_VIDEOS + MAX_DOCS]:
         ct = f.content_type or ""
         data = f.file.read()
-        if ct.startswith("video/"):
-            if len(album) < 10:
-                album.append((f.filename or "video.mp4", data, "video"))
-        else:
-            docs.append((f.filename or "file.bin", data))
+        if ct.startswith("video/") and len(videos_buf) < MAX_VIDEOS:
+            videos_buf.append((f.filename or "video.mp4", data))
+        elif not ct.startswith("video/") and len(docs_buf) < MAX_DOCS:
+            docs_buf.append((f.filename or "file.bin", data))
 
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {
         "total": len(user_ids), "processed": 0, "sent": 0, "fails": [], "done": False,
-        "text": (text or "").strip(), "album": album, "docs": docs
+        "text": (text or "").strip(), "photos": photos_buf, "videos": videos_buf, "docs": docs_buf
     }
 
     async def _run(job_id: str, uids: List[int]):
@@ -164,16 +218,9 @@ def start(
                     txt = JOBS[job_id]["text"]
                     if txt:
                         await bot.send_message(uid, txt, parse_mode="HTML", disable_web_page_preview=True)
-                    if JOBS[job_id]["album"]:
-                        media = []
-                        for name, data, kind in JOBS[job_id]["album"][:10]:
-                            if kind == "video":
-                                media.append(InputMediaVideo(media=BufferedInputFile(data, filename=name)))
-                            else:
-                                media.append(InputMediaPhoto(media=BufferedInputFile(data, filename=name)))
-                        await bot.send_media_group(uid, media)
-                    for name, data in JOBS[job_id]["docs"][:5]:
-                        await bot.send_document(uid, BufferedInputFile(data, filename=name))
+                    await _send_photos(bot, uid, JOBS[job_id]["photos"])
+                    await _send_videos(bot, uid, JOBS[job_id]["videos"])
+                    await _send_docs(bot, uid, JOBS[job_id]["docs"])
                     JOBS[job_id]["sent"] += 1
                 except Exception as e:
                     reason = _reason_from_exc(e)
@@ -198,14 +245,17 @@ def start(
                         })
                 finally:
                     JOBS[job_id]["processed"] += 1
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.25)
         finally:
-            try: await bot.session.close()
-            except: pass
+            try:
+                await bot.session.close()
+            except:
+                pass
             JOBS[job_id]["done"] = True
 
     background_tasks.add_task(_run, job_id, user_ids)
     return {"job_id": job_id, "total": len(user_ids)}
+
 
 @router.get("/status")
 def status(job_id: str):
