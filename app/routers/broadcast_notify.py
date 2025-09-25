@@ -29,26 +29,19 @@ def _check_admin(tg_id: str, db: Session):
         raise HTTPException(status_code=403, detail="forbidden")
 
 
-def _pick_recipients(db: Session) -> List[User]:
-    return (
+def _pick_recipients(db: Session, include_tg_id: str | None = None) -> List[User]:
+    rows = (
         db.query(User)
         .filter(User.notifications == True, User.is_blocked == False)
         .order_by(User.created_at.asc())
         .all()
     )
-
-
-def _reason_from_exc(e: Exception) -> str:
-    s = (str(e) or "").lower()
-    if isinstance(e, tg_exc.TelegramForbiddenError) or "blocked by the user" in s:
-        return "пользователь заблокировал бота"
-    if "deactivated" in s:
-        return "аккаунт удалён/деактивирован"
-    if isinstance(e, tg_exc.TelegramBadRequest) and ("chat not found" in s or "user not found" in s):
-        return "чат/пользователь не найден"
-    if isinstance(e, tg_exc.TelegramRetryAfter) or "too many requests" in s:
-        return "слишком много запросов (лимит Telegram)"
-    return str(e) or "ошибка доставки"
+    # гарантированно добавляем отправителя
+    if include_tg_id:
+        me = db.query(User).filter(User.tg_id == include_tg_id).first()
+        if me and all(str(u.tg_id) != str(include_tg_id) for u in rows):
+            rows.insert(0, me)
+    return rows
 
 
 async def _send_photos(bot: Bot, chat_id: int, photos: List[Tuple[str, bytes]]) -> None:
@@ -164,7 +157,7 @@ def recipients(init_data: str = Query(...), db: Session = Depends(get_db)):
     if not ok: raise HTTPException(401, "invalid initData")
     tg_id = extract_tg_id(ok.get("user"))
     _check_admin(tg_id, db)
-    recips = _pick_recipients(db)
+    recips = _pick_recipients(db, include_tg_id=tg_id)
     return {"count": len(recips)}
 
 
@@ -183,7 +176,7 @@ def start(
     _check_admin(tg_id, db)
 
     # получатели
-    recips = _pick_recipients(db)
+    recips = _pick_recipients(db, include_tg_id=tg_id)
     user_ids = [int(u.tg_id) for u in recips if str(u.tg_id).isdigit()]
 
     # вложения в память
