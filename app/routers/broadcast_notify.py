@@ -69,23 +69,45 @@ async def _send_photos(bot: Bot, chat_id: int, photos: List[Tuple[str, bytes]]) 
 async def _send_videos(bot: Bot, chat_id: int, videos: List[Tuple[str, bytes]]) -> None:
     if not videos:
         return
+
+    # бьём на пачки по MAX_VIDEOS
     chunks = [videos[i:i + MAX_VIDEOS] for i in range(0, len(videos), MAX_VIDEOS)]
+
     for chunk in chunks:
-        if len(chunk) == 1:
-            name, data = chunk[0]
-            await bot.send_video(chat_id, BufferedInputFile(data, filename=name))
-        else:
-            media = [InputMediaVideo(media=BufferedInputFile(d, filename=n)) for n, d in chunk]
-            try:
+        try:
+            if len(chunk) == 1:
+                name, data = chunk[0]
+                # обычная отправка видео
+                await bot.send_video(
+                    chat_id,
+                    BufferedInputFile(data, filename=name),
+                    supports_streaming=True
+                )
+            else:
+                # альбом из видео (если 2–5 шт.)
+                media = [
+                    InputMediaVideo(
+                        media=BufferedInputFile(d, filename=n),
+                        supports_streaming=True
+                    ) for n, d in chunk
+                ]
                 await bot.send_media_group(chat_id, media)
-            except Exception:
-                # fallback — по одному
-                for name, data in chunk:
+        except Exception:
+            # fallback: шлём каждое видео по одному;
+            # если видео не принимается Телеграмом — шлём как документ
+            for name, data in chunk:
+                try:
+                    await bot.send_video(
+                        chat_id,
+                        BufferedInputFile(data, filename=name),
+                        supports_streaming=True
+                    )
+                except Exception:
                     try:
-                        await bot.send_video(chat_id, BufferedInputFile(data, filename=name))
+                        await bot.send_document(chat_id, BufferedInputFile(data, filename=name))
                     except Exception:
                         pass
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
 
 
 async def _send_docs(bot: Bot, chat_id: int, docs: List[Tuple[str, bytes]]) -> None:
