@@ -9,7 +9,7 @@ _REFRESH_TTL = 300
 _last_fetch_ts = 0.0
 
 AVAX_BASE = "https://admin.avaxmotors.ru"
-API_URL = f"{AVAX_BASE}api/items.php?action=list&limit=100000&filters[stock_status]=0&with_photo=1"
+API_URL = f"{AVAX_BASE}/api/items.php?action=list&limit=100000&filters[stock_status]=0&with_photo=1"
 
 # Резервы
 RESERVES_URL = ""
